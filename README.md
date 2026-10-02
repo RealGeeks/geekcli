@@ -28,6 +28,61 @@ geekcli posts create --title "Spring market update" --slug spring-market-update 
 geekcli posts publish spring-market-update
 ```
 
+## Why Real Geeks works well with AI agents
+
+Most real estate websites can only be changed by clicking through an admin.
+A Real Geeks website can be run by the AI tools you already use:
+
+- **The whole site is an open, documented API.** Blog posts, pages,
+  neighborhood (area) pages, the home page, navigation, sidebars, footers,
+  settings, design and files, all described in the
+  [Content API documentation](https://developers.realgeeks.com/content-api/).
+- **Two ways in.** Connect Claude or ChatGPT to the site and ask in plain
+  English, or let a coding agent such as Claude Code or Codex drive geekcli.
+  Either way the site owner approves access in the site's own admin, chooses
+  what it may change, and can revoke it at any time.
+- **Safety rails built in.** New posts start as drafts, pages and posts keep a
+  revision history with one-command undo, design changes can be previewed
+  before they go live, and every change is recorded with the key that made it.
+  When something is saved but probably isn't what was meant, the response
+  says so instead of failing silently.
+- **Listings an agent can get right.** Agents read the site's own MLS search
+  fields and check values against the MLS's spelling, so a neighborhood page
+  shows that neighborhood's listings instead of an empty or city-wide feed.
+- **Built to be found, including by AI search.** SEO Fast Track area pages,
+  sitemaps that pick up new pages within about 15 minutes, canonical tags,
+  structured data, and a robots.txt that welcomes AI assistants and AI search
+  crawlers.
+
+## New to Real Geeks?
+
+Real Geeks is an all-in-one real estate platform: an IDX website with your
+MLS's listings, a built-in CRM, and lead generation, for agents and teams. If
+you want a website your AI tools can actually run, from writing the market
+update to building the next neighborhood page,
+[book a demo](https://www.realgeeks.com/demo/) or
+[see pricing](https://www.realgeeks.com/real-geeks-pricing).
+
+Already a customer? Read on.
+
+## What you need
+
+- **The Content API switched on for the website.** It is in beta and enabled
+  per site: [request access](https://developers.realgeeks.com/request-api-access/)
+  or ask Real Geeks support. Until then every command fails with
+  `api_disabled`.
+- **The site owner's approval.** Only the owner (or a Real Geeks superuser)
+  can approve geekcli for a site, in the site's own admin. Anyone else can use
+  a key the owner creates for them under **Admin → API keys**.
+- A Mac, Linux or Windows terminal. If you would rather just ask in plain
+  English, connect the site to Claude or ChatGPT instead (see
+  [AI assistants](https://developers.realgeeks.com/content-api/#ai-assistants));
+  it uses the same API and permissions with nothing to install.
+
+Changes are live on the site as soon as a command succeeds, exactly like
+edits in the admin. Blog posts are the exception: geekcli creates them as
+drafts until you publish.
+
 ## For AI agents
 
 Start with `geekcli guide`: it is the complete manual for driving the CLI
@@ -124,6 +179,87 @@ Environment variables cover CI and agent sandboxes without a config file:
 | `GEEKCLI_CONFIG_DIR` | where the config file lives                                       |
 | `GEEKCLI_BROWSER`    | Chrome/Chromium binary for `snapshot` and `inspect` (`--browser`) |
 
+To revoke access, delete the key under **Admin → API keys** on the site; it
+stops working immediately. `geekcli auth logout --site www.example.com`
+forgets the stored key on your computer.
+
+## A quick tour
+
+Every command explains itself with `--help`, for example
+`geekcli posts create --help`.
+
+Write a blog post in Markdown, then publish it or schedule it:
+
+```bash
+geekcli posts create --title "Spring market update" --slug spring-market-update \
+    --content-file post.md --category market-updates --create-categories   # saved as a draft
+geekcli posts publish spring-market-update
+geekcli posts publish spring-market-update --at 2026-11-01T09:00:00-05:00
+```
+
+Update a page; only what you pass changes:
+
+```bash
+geekcli pages update /about/ --content-file about.md
+geekcli pages update /buying/ --meta-description "Everything you need to know about buying in Riverside."
+```
+
+Build a neighborhood (area) page. Its listings come from its search, not its
+name, so check the search first:
+
+```bash
+geekcli search fields                                  # every field this site's searches accept
+geekcli search check subdivision=Downtown --count      # does the MLS know the value? how many listings?
+geekcli area-pages create --slug downtown --area-name Downtown --anchor-text "Downtown Homes" \
+    --search-criteria subdivision=Downtown --content-file downtown.md
+```
+
+Upload a photo and get back the URL to use in posts and pages, then look at
+the result (snapshots use your installed Chrome or Chromium):
+
+```bash
+geekcli files upload hero.jpg --to images
+geekcli snapshot / --full
+geekcli snapshot /blog/spring-market-update/ --mobile --full
+```
+
+[docs/GUIDE.md](docs/GUIDE.md) (also `geekcli guide`) covers every task,
+including navigation, sidebars, footers, featured pages, settings and design.
+
+## Using it with an AI coding agent
+
+Coding agents such as Claude Code or Codex run commands, so they can drive
+geekcli directly, and `geekcli guide` is written for them.
+
+1. Install geekcli and run `geekcli auth login` yourself, so the agent never
+   handles the site owner's sign-in.
+2. Ask for what you want and point it at the guide, for example: *"Use
+   geekcli to write a draft blog post about this spring's market in
+   Riverside, with a header image. Run `geekcli guide` first."*
+3. The agent checks the site with `geekcli me`, does the work, and can take
+   snapshots to check the result.
+
+Ask it to keep posts as drafts and to show you a snapshot before changing
+anything visible on the home page or navigation; the guide already tells
+agents to work that way.
+
+## Staying safe on a live site
+
+- **Drafts first**: new posts stay drafts until `geekcli posts publish`.
+  Drafts and scheduled posts are not visible to visitors or search engines.
+- **Undo**: pages, area and agent pages, posts, footers and the home page keep
+  a history. `geekcli pages revisions /buying/` lists versions and
+  `geekcli pages revert /buying/ <id>` goes back to one; the same works for
+  `posts`, `area-pages`, `agent-pages`, `footers` and `home-page`.
+- **Preview design changes**: `geekcli design preview` returns a link that
+  shows a new template or color scheme without saving it.
+- **Warnings**: when a write is saved but probably not what you meant (a city
+  the MLS doesn't know, markup the site can't keep), geekcli prints a
+  `warning:` line, with suggestions where it can.
+- **History**: every change is recorded in the site's change history, labelled
+  with the key that made it.
+
+
 ## Commands
 
 ```
@@ -216,6 +352,52 @@ Highlights:
   lets an agent verify rendered DOM behavior before moving on.
 - **429s are retried** with `Retry-After`, up to `--max-retries` (default 3). The limit
   is 600 requests an hour per key.
+
+## Troubleshooting
+
+- **`api_disabled`** (exit 3): the Content API is off for that site.
+  [Request access](https://developers.realgeeks.com/request-api-access/) or
+  contact Real Geeks support.
+- **`token_expired`** (exit 3): keys last six months. Run
+  `geekcli auth login --site www.example.com` again.
+- **`command not found: geekcli`**: open a new terminal. If it is still
+  missing, run the installer again: its `Installed …` line says where geekcli
+  went, and the next line shows how to add that folder to your PATH if it
+  isn't already.
+- **Not the site owner?** Ask the owner to run the login, or to create a key
+  under **Admin → API keys** for you, then run
+  `geekcli auth login --site www.example.com --api-key-stdin`, paste the key,
+  press Enter and finish with Ctrl-D (Ctrl-Z then Enter on Windows).
+- **A character is rejected** (`422` naming it): site text is stored as
+  Windows-1252, so emoji, arrows and CJK text can't be saved. Remove them or
+  write them as HTML entities (`&#8594;`).
+- **Anything else**: add `-v` to see each request and response, and send the
+  output to Real Geeks support or open a
+  [GitHub issue](https://github.com/RealGeeks/geekcli/issues).
+
+## FAQ
+
+**Does it cost anything?** No. geekcli is free and open source (MIT).
+
+**How is it different from connecting an AI assistant?** Both use the same
+Content API and permissions. Connecting Claude or ChatGPT to the site lets you
+manage it by chatting, with nothing to install. geekcli runs on your computer,
+for people and coding agents who work in a terminal or want to script
+repeated tasks.
+
+**Can it do everything the admin can?** It covers blog posts and categories,
+pages, area and agent pages, the home page, navigation, sidebars, footers,
+featured pages, editable settings, design and files. Leads, the CRM and
+billing stay in the admin and the CRM.
+
+**More than one website?** Log in to each once; `geekcli auth sites` lists
+them, `geekcli auth use <domain>` switches the default, and `--site` picks one
+for a single command.
+
+**Where is the full reference?** The
+[Content API documentation](https://developers.realgeeks.com/content-api/)
+for every field and rule, and [docs/GUIDE.md](docs/GUIDE.md) for the command
+behind each.
 
 ## Development
 
