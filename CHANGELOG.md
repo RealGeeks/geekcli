@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/RealGeeks/geekcli/compare/v0.4.0...v0.5.0) (2026-10-02)
+
+
+### Features
+
+* catch up with the Content API and link its reference ([#3](https://github.com/RealGeeks/geekcli/issues/3)) ([aec5f77](https://github.com/RealGeeks/geekcli/commit/aec5f77b5973edb87af17cc9164876025c21845a))
+
 ## 0.4.0 (2026-10-02)
 
 
