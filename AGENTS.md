@@ -111,6 +111,9 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
   what makes `update` a true PATCH. Never add defaults on update.
 - `posts create` defaults `status` to `draft` on purpose; the API defaults to
   published. Keep that.
+- `area-pages create` refuses to run without `--search-criteria` or
+  `--search` unless `--no-search` is passed: area pages have no draft state
+  and `--area-name` does not filter listings. Keep that.
 - Human-only text goes to stderr via `Printer::note`; stdout is reserved for
   the result document. API `warnings` are the exception: `Client` prints them
   with `eprintln!` in every mode, since agents run in JSON mode and need them.
