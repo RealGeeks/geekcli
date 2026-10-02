@@ -48,7 +48,9 @@ pub enum HomePageSub {
     #[command(after_help = "Notes:
   - --search-criteria drives the listings strip; --search-field-defaults-criteria pre-fills the search form (county, price floor, types).
   - --property-display-type, --search-form-tabs and --tile-group render on anna-modern only; build the tiles with `geekcli featured` first.
+  - --search-header (alias --page-heading) is the page's main hero heading, not a small label; unset, the site shows the BIG_SEARCH_TITLE setting (\"Real Estate Search\"). Use the page's target keyword.
   - --landscape takes a file URL (an .mp4 becomes a video), `none` to hide the header image, or `null` for the site's; `geekcli guide featured`.
+  - The hero background is --landscape, or the sitewide HEADER_IMAGE setting when the page has none. --search-image is not a background: it renders as an image (logo-style) inside the hero.
   - Content rules: `geekcli guide html`.
   - Snapshot with --full and --mobile after changes.")]
     Update(Box<UpdateArgs>),
@@ -74,8 +76,8 @@ pub struct UpdateArgs {
     /// Treat the content as Markdown and convert it to HTML
     #[arg(long)]
     pub markdown: bool,
-    /// Heading above the search form
-    #[arg(long)]
+    /// The page's main hero heading (above the search form); unset, the site shows the BIG_SEARCH_TITLE setting ("Real Estate Search"). Use the page's target keyword
+    #[arg(long, visible_alias = "page-heading", value_name = "TEXT")]
     pub search_header: Option<String>,
     /// Text under the search heading
     #[arg(long)]
@@ -97,7 +99,7 @@ pub struct UpdateArgs {
     /// Show the Advanced Search / Sell Your Home tabs above the form (anna-modern)
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
     pub search_form_tabs: Option<bool>,
-    /// Image behind the search form: a file URL, or `null` to clear
+    /// Image shown in the hero (logo-style, not the background): a file URL, or `null` to clear
     #[arg(long, value_name = "URL_OR_NULL")]
     pub search_image: Option<String>,
     /// Featured Pages tile group to show (anna-modern): id, title, or `null`

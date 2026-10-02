@@ -658,6 +658,49 @@ fn guide_topics_and_sections() {
         .stdout(predicate::str::contains("Windows-1252"));
 }
 
+/// The inline-style list in `posts create --help` matches `guide html`.
+#[test]
+fn posts_create_help_lists_the_guide_inline_styles() {
+    let env = Env::new();
+    let squash = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let guide = squash(
+        &env.cmd()
+            .args(["guide", "html"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    );
+    let help = squash(
+        &env.cmd()
+            .args(["posts", "create", "--help"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    );
+    let start = guide
+        .find("keeps only: ")
+        .expect("style list in guide html")
+        + 12;
+    let list = &guide[start..start + guide[start..].find('.').unwrap()];
+    let properties: Vec<&str> = list.split(", ").collect();
+    assert!(properties.len() > 15, "{list}");
+    for property in properties {
+        assert!(
+            help.contains(property),
+            "posts create --help does not list {property}"
+        );
+    }
+}
+
 #[test]
 fn blog_home_page_get_and_update() {
     let mut env = Env::new();

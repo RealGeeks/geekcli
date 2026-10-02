@@ -34,6 +34,17 @@ pub enum FootersSub {
     /// Show a footer by id or name (with the pages that use it)
     Get { reference: String },
     /// Create a footer from HTML (or Markdown)
+    #[command(after_help = "Notes:
+  - A footer fills the footer's third column; attach it with `pages update <page> --footer <id or name>`. Footer 1 is the default.
+  - Same HTML rules as posts (`geekcli guide html`); scripts are stripped and logos and photos should be `files upload -q` URLs.
+  - An agent block (name, address, phone, licence, social icons):
+      <p><strong>Jordan Avery</strong><br>Example Realty<br>
+      123 Main St, Springfield, ST 00000<br>
+      <a href=\"tel:+15555550123\">(555) 555-0123</a><br>License #0000000</p>
+      <p><a href=\"https://facebook.com/example\"><em class=\"fa-brands fa-facebook\"></em></a>
+      <a href=\"https://instagram.com/example\"><em class=\"fa-brands fa-instagram\"></em></a>
+      <a href=\"https://linkedin.com/in/example\"><em class=\"fa-brands fa-linkedin\"></em></a></p>
+  - Font Awesome icons render on the themes seen so far; snapshot to check.")]
     Create(ContentArgs),
     /// Replace a footer's content
     #[command(after_help = "Notes:

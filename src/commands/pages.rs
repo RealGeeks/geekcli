@@ -184,8 +184,8 @@ pub struct TreeFields {
     /// Treat the content as Markdown and convert it to HTML
     #[arg(long)]
     pub markdown: bool,
-    /// Heading above the search form
-    #[arg(long)]
+    /// The page's main hero heading (above the search form); unset, the site shows the BIG_SEARCH_TITLE setting ("Real Estate Search"). Use the page's target keyword
+    #[arg(long, visible_alias = "page-heading", value_name = "TEXT")]
     pub search_header: Option<String>,
     /// Heading above the property listings
     #[arg(long)]
