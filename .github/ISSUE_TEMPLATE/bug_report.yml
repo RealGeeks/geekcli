@@ -1,0 +1,44 @@
+name: Bug report
+description: geekcli did something wrong or unexpected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove API keys (`rg_live_...`), site content you would not post publicly, and anything else private from what you paste here.
+  - type: input
+    id: version
+    attributes:
+      label: geekcli version
+      description: Output of `geekcli --version`.
+      placeholder: geekcli 0.5.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15 (Apple silicon), Ubuntu 24.04, Windows 11…
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the error output (JSON errors are fine) and the exit code.
+      render: text
+    validations:
+      required: true

@@ -1,0 +1,69 @@
+[package]
+name = "geekcli"
+version = "0.6.0"
+edition = "2021"
+rust-version = "1.88"
+description = "The Real Geeks command line: manage a Real Geeks website from scripts and AI agents"
+license = "MIT"
+repository = "https://github.com/RealGeeks/geekcli"
+homepage = "https://developers.realgeeks.com/content-api/"
+readme = "README.md"
+keywords = ["real-estate", "cms", "cli", "ai-agents", "realgeeks"]
+categories = ["command-line-utilities"]
+include = ["/src", "/docs/GUIDE.md", "/README.md", "/LICENSE", "/CHANGELOG.md"]
+
+[lib]
+name = "geekcli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "geekcli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "1"
+dirs = "7"
+thiserror = "2"
+url = "2"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+comfy-table = "8"
+open = "5"
+rand = "0.10"
+sha2 = "0.11"
+base64 = "0.23"
+chrono = "0.4"
+headless_chrome = "1"
+anyhow = "1"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+mockito = "1.6"
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+expect_used = "deny"
+unwrap_used = "deny"
+panic = "deny"
+dbg_macro = "warn"
+todo = "warn"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+doc_markdown = "allow"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
