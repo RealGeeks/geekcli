@@ -57,7 +57,7 @@ pub enum PostsSub {
   - Put <!--read more--> where the summary ends.
   - Markdown (--markdown or a .md file) converts before sending.
   - Creating with --status published can read `scheduled` for a second; it is published.
-  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - Drafts and scheduled posts return 404 to visitors and search engines and stay out of the blog home, categories, archives, feed and sitemap; a logged-in site admin who can edit posts sees them at their URL as a noindex preview.
   - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     /// Create a post (saved as a draft unless --status published)
     Create(CreateArgs),
@@ -76,7 +76,7 @@ pub enum PostsSub {
     /// Publish a post now, or at a given time
     #[command(after_help = "Notes:
   - --at in the future makes the post `scheduled` until then.
-  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - Drafts and scheduled posts return 404 to visitors and search engines and stay out of the blog home, categories, archives, feed and sitemap; a logged-in site admin who can edit posts sees them at their URL as a noindex preview.
   - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     Publish {
         /// Post id or slug
@@ -90,7 +90,7 @@ pub enum PostsSub {
     },
     /// Take a post down: set it back to a draft
     #[command(after_help = "Notes:
-  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - Drafts and scheduled posts return 404 to visitors and search engines and stay out of the blog home, categories, archives, feed and sitemap; a logged-in site admin who can edit posts sees them at their URL as a noindex preview.
   - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     Unpublish {
         /// Post id or slug

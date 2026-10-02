@@ -176,10 +176,12 @@ Notes:
 - `--publish` in the future makes the post `scheduled`; `state` in the
   response is `draft`, `scheduled` or `published`.
 - `state` is the field that reflects visibility; `status` alone does not
-  (a `published` post with a future publish date is `scheduled`). Drafts
-  and scheduled posts are hidden from the blog index, feed and sitemap,
-  and that is all post status promises: do not rely on it to keep content
-  confidential, and do not put anything in a draft that must not be seen.
+  (a `published` post with a future publish date is `scheduled`). Only
+  `state: published` posts are public. Drafts and scheduled posts return
+  404 to visitors and search engines and stay out of the blog home,
+  categories, archives, RSS feed and sitemap; a site admin logged into the
+  site who can edit posts sees them at their URL as a preview marked
+  `noindex`.
 - `--replace` on `update` sends PUT: omitted optional fields reset.
 
 API reference: [Blog posts](https://developers.realgeeks.com/content-api/blog-posts/#blog-posts).
@@ -699,11 +701,9 @@ geekcli snapshot / --selector ".card" --nth 2 --out third-card.png
 ```
 
 Output is `{"path", "url", "width", "height", "full", "bytes", "browser"}`;
-`-q` prints just the file path. Snapshot a post after publishing it.
-Drafts and scheduled posts are kept out of the blog index, feed and
-sitemap, but what a browser gets when it asks for one directly is not
-guaranteed, so do not rely on post status to keep content confidential
-(§5). After a content
+`-q` prints just the file path. Only public pages render: the browser
+runs without a login, so a draft or scheduled post is a 404 (§5); snapshot
+it after publishing. After a content
 change, snapshot the page and look at it before moving on; unstyled
 markup (a class the theme does not know), overflow on a phone, or a
 character the database could not store are invisible in the API response

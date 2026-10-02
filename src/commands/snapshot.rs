@@ -26,7 +26,7 @@ pub const BROWSER_ENV: &str = "GEEKCLI_BROWSER";
 #[command(after_help = "Notes:
   - --full captures the whole document at a normal viewport, so a 100vh hero stays one screen tall.
   - Look for: text on borders, a card row wider than a phone, links that look like plain text, ? where a special character was, a class the theme does not style, the old agent's name or phone.
-  - Snapshot a post after publishing it: drafts and scheduled posts are hidden from the blog index, feed and sitemap, and what a browser gets for one is not guaranteed. Post status is not a way to keep content confidential.
+  - Drafts and scheduled posts 404 here (the browser has no login); publish first.
   - Themes without a phone breakpoint overflow at 390px on every page, not just yours; compare with an untouched page before changing content.")]
 pub struct SnapshotArgs {
     /// Site-relative path (/, /blog/my-post/) or a full URL. Default: the home page
