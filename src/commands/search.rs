@@ -3,7 +3,7 @@
 //! actually filter the way they read.
 //!
 //! The site silently drops any criterion that is not one of its search
-//! form fields (so `?q=Buckhead` "works" but matches everything). These
+//! fields (so `?q=Buckhead` "works" but matches everything). These
 //! commands make that visible: every criterion you pass is checked against
 //! what the site echoes back, and anything ignored is reported.
 
@@ -20,6 +20,9 @@ use crate::output::{cell, col, sanitize, Column, Format};
 pub const SEARCH_PATH: &str = "api/v2/search/";
 pub const METADATA_PATH: &str = "api/v2/search/metadata/";
 pub const FORM_PATH: &str = "search_forms/api/advanced_search_form.json";
+/// Every field the site's search accepts for its board (the site's own
+/// AI search reads it); a superset of the advanced form.
+pub const CATALOG_PATH: &str = "search_forms/api/dump_uberform_fields.json";
 
 /// Query keys that control the request rather than filter properties.
 const CONTROL_KEYS: &[&str] = &[
@@ -50,6 +53,15 @@ pub const FIELD_COLUMNS: &[Column] = &[
     col("choices", "/choices_count"),
 ];
 
+pub const CATALOG_COLUMNS: &[Column] = &[
+    col("attr", "/attr"),
+    col("params", "/params"),
+    col("label", "/label"),
+    col("widget", "/widget"),
+    col("default", "/default"),
+    col("choices", "/choices_count"),
+];
+
 pub const CHOICE_COLUMNS: &[Column] = &[col("value", "/value"), col("label", "/label")];
 
 pub const RESULT_COLUMNS: &[Column] = &[
@@ -70,12 +82,18 @@ pub struct SearchCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum SearchSub {
-    /// List the search fields this site accepts (the advanced search form)
+    /// List every search field this site accepts (its field catalog)
+    #[command(after_help = "Notes:
+  - Fields come from the site's field catalog, every field its search accepts for the board, including ones the advanced search form leaves out (subdivision, zip, school_district …). Sites without a catalog fall back to the form, with a note on stderr.
+  - Range fields are searched by their `params`, never the bare name: list_price is list_price_min / list_price_max.
+  - `dynamic: true` fields take their values from the listings (city, subdivision …): `search choices <field> --all` lists them.
+  - `polygon` is built in: a custom map area, not on the site's lists (see `geekcli guide polygon`).")]
     Fields,
     /// List the valid values for one field, e.g. `city`
     #[command(after_help = "Notes:
   - `--fuzzy` ranks values by edit distance to the text (values containing it first) and shows the 10 closest, with a `distance` column. Use it when a value does not match exactly, e.g. `search choices city --all --fuzzy mclean`.
-  - Values are case sensitive on the site: `McLean` and `Mclean` are different cities. Copy the value exactly.")]
+  - Values are case sensitive on the site: `McLean` and `Mclean` are different cities. Copy the value exactly.
+  - Sources: without --all, the site's field catalog (fixed lists such as type, price presets, frontage); for fields filled from the listings (city, subdivision …) the advanced form's default-county list. --all reads the search autocomplete index: every value, every county.")]
     Choices {
         /// Field name from `search fields`
         field: String,
@@ -314,19 +332,23 @@ pub fn check_polygon(value: &str) -> Result<Vec<String>> {
     Ok(warnings)
 }
 
-/// The `search fields` row for `polygon`, shaped like the form rows.
+/// The `search fields` row for `polygon`, shaped like the other rows.
 fn polygon_field() -> Value {
-    json!({
-        "attr": POLYGON,
-        "label": "Custom area: lat,lng;lat,lng;… (built in, not on the site's form; see `geekcli guide polygon`)",
-        "section": "builtin",
-        "widget": "polygon",
-        "default": Value::Null,
-        "value": Value::Null,
-        "depends_on": Value::Null,
-        "choices_count": 0,
-        "choices": [],
-    })
+    FieldRow {
+        attr: json!(POLYGON),
+        label: json!("Custom area: lat,lng;lat,lng;… (built in, not on the site's form; see `geekcli guide polygon`)"),
+        section: "builtin",
+        widget: json!("polygon"),
+        default: Value::Null,
+        value: Value::Null,
+        depends_on: Value::Null,
+        choices: Vec::new(),
+        params: vec![POLYGON.to_string()],
+        flags: Vec::new(),
+        default_min: Value::Null,
+        default_max: Value::Null,
+    }
+    .into_json()
 }
 
 fn is_control(key: &str) -> bool {
@@ -426,6 +448,98 @@ fn strip_tags(text: &str) -> String {
 
 // ------------------------------------------------------------------ fields
 
+/// Where the field rows came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldSource {
+    /// The site's field catalog: every field the search accepts.
+    Catalog,
+    /// The advanced search form: a subset, used when the catalog is missing.
+    Form,
+}
+
+impl FieldSource {
+    fn name(self) -> &'static str {
+        match self {
+            FieldSource::Catalog => "catalog",
+            FieldSource::Form => "form",
+        }
+    }
+}
+
+struct Fields {
+    rows: Vec<Value>,
+    source: FieldSource,
+}
+
+/// One `{value, label}` choice from any of the shapes the site uses:
+/// `[value, label]` pairs (form), `{val|value, label}` objects (catalog)
+/// or bare values.
+fn choice_row(choice: &Value) -> Value {
+    match choice {
+        Value::Array(pair) if pair.len() == 2 => json!({ "value": pair[0], "label": pair[1] }),
+        Value::Object(o) => {
+            let value = o
+                .get("val")
+                .or_else(|| o.get("value"))
+                .or_else(|| o.get("id"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let label = o
+                .get("label")
+                .or_else(|| o.get("name"))
+                .cloned()
+                .unwrap_or_else(|| value.clone());
+            json!({ "value": value, "label": label })
+        }
+        other => json!({ "value": other, "label": other }),
+    }
+}
+
+fn choice_list(choices: Option<&Value>) -> Vec<Value> {
+    choices
+        .and_then(Value::as_array)
+        .map(|list| list.iter().map(choice_row).collect())
+        .unwrap_or_default()
+}
+
+/// A `search fields` row. Form, catalog and built-in rows share this shape.
+struct FieldRow {
+    attr: Value,
+    label: Value,
+    section: &'static str,
+    widget: Value,
+    default: Value,
+    value: Value,
+    depends_on: Value,
+    choices: Vec<Value>,
+    params: Vec<String>,
+    flags: Vec<String>,
+    default_min: Value,
+    default_max: Value,
+}
+
+impl FieldRow {
+    fn into_json(self) -> Value {
+        let dynamic = self.flags.iter().any(|f| f == "dynamic");
+        json!({
+            "attr": self.attr,
+            "label": self.label,
+            "section": self.section,
+            "widget": self.widget,
+            "default": self.default,
+            "value": self.value,
+            "depends_on": self.depends_on,
+            "choices_count": self.choices.len(),
+            "choices": self.choices,
+            "params": self.params,
+            "flags": self.flags,
+            "dynamic": dynamic,
+            "default_min": self.default_min,
+            "default_max": self.default_max,
+        })
+    }
+}
+
 fn form_fields(ctx: &Context) -> Result<Vec<Value>> {
     let form = ctx.client.site_get(FORM_PATH, &Query::new())?.body;
     let mut rows = Vec::new();
@@ -434,38 +548,126 @@ fn form_fields(ctx: &Context) -> Result<Vec<Value>> {
             continue;
         };
         for item in items {
-            let choices: Vec<Value> = item
-                .get("choices")
-                .and_then(Value::as_array)
-                .map(|list| {
-                    list.iter()
-                        .map(|pair| match pair.as_array() {
-                            Some(p) if p.len() == 2 => json!({ "value": p[0], "label": p[1] }),
-                            _ => json!({ "value": pair, "label": pair }),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            rows.push(json!({
-                "attr": item.get("attr").cloned().unwrap_or(Value::Null),
-                "label": item.get("label").cloned().unwrap_or(Value::Null),
-                "section": section,
-                "widget": item.get("widget_type").cloned().unwrap_or(Value::Null),
-                "default": item.get("default_value").cloned().unwrap_or(Value::Null),
-                "value": item.get("value").cloned().unwrap_or(Value::Null),
-                "depends_on": item.get("dependent_fields").cloned().unwrap_or(Value::Null),
-                "choices_count": choices.len(),
-                "choices": choices,
-            }));
+            let get = |key: &str| item.get(key).cloned().unwrap_or(Value::Null);
+            let attr = get("attr");
+            rows.push(
+                FieldRow {
+                    params: attr.as_str().map(str::to_string).into_iter().collect(),
+                    attr,
+                    label: get("label"),
+                    section,
+                    widget: get("widget_type"),
+                    default: get("default_value"),
+                    value: get("value"),
+                    depends_on: get("dependent_fields"),
+                    choices: choice_list(item.get("choices")),
+                    flags: Vec::new(),
+                    default_min: Value::Null,
+                    default_max: Value::Null,
+                }
+                .into_json(),
+            );
         }
     }
     Ok(rows)
 }
 
+/// Rows from the site's field catalog: a JSON list of
+/// `{id, label, widget, choices: [{val, label}], flags, default, …}`.
+/// Unknown widgets and missing keys are tolerated; `None` if the body is
+/// not a list of fields at all.
+fn catalog_rows(body: &Value) -> Option<Vec<Value>> {
+    let items = body
+        .as_array()
+        .or_else(|| body.get("fields").and_then(Value::as_array))?;
+    let mut rows = Vec::new();
+    for item in items {
+        let Some(id) = ["id", "attr", "name"]
+            .iter()
+            .find_map(|k| item.get(*k).and_then(Value::as_str))
+            .filter(|id| !id.is_empty())
+        else {
+            continue;
+        };
+        let get = |key: &str| item.get(key).cloned().unwrap_or(Value::Null);
+        let flags: Vec<String> = item
+            .get("flags")
+            .and_then(Value::as_array)
+            .map(|f| {
+                f.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let widget = get("widget");
+        // a range field is searched as <id>_min / <id>_max, never <id>
+        let range =
+            widget.as_str() == Some("min_max_field") || flags.iter().any(|f| f == "min_max_field");
+        let params = if range {
+            vec![format!("{id}_min"), format!("{id}_max")]
+        } else {
+            vec![id.to_string()]
+        };
+        rows.push(
+            FieldRow {
+                attr: json!(id),
+                label: get("label"),
+                section: "catalog",
+                widget,
+                default: get("default"),
+                value: Value::Null,
+                depends_on: get("child"),
+                choices: choice_list(item.get("choices")),
+                params,
+                flags,
+                default_min: get("default_min"),
+                default_max: get("default_max"),
+            }
+            .into_json(),
+        );
+    }
+    Some(rows)
+}
+
+fn catalog_fields(ctx: &Context) -> Result<Vec<Value>> {
+    let body = ctx.client.site_get(CATALOG_PATH, &Query::new())?.body;
+    catalog_rows(&body).ok_or_else(|| Error::Other("the response is not a list of fields".into()))
+}
+
+/// The site's searchable fields: the field catalog, or the advanced search
+/// form on sites that do not serve the catalog (with a note on stderr when
+/// `note` is set).
+fn load_fields(ctx: &Context, note: bool) -> Result<Fields> {
+    match catalog_fields(ctx) {
+        Ok(rows) => Ok(Fields {
+            rows,
+            source: FieldSource::Catalog,
+        }),
+        Err(e) => {
+            if note {
+                eprintln!(
+                "note: the site's field catalog could not be read ({}); using its advanced search form, which lists fewer fields",
+                sanitize(&e.to_string())
+            );
+            }
+            Ok(Fields {
+                rows: form_fields(ctx)?,
+                source: FieldSource::Form,
+            })
+        }
+    }
+}
+
 fn fields(ctx: &Context) -> Result<()> {
-    let mut rows = form_fields(ctx)?;
+    let Fields { mut rows, source } = load_fields(ctx, true)?;
     rows.push(polygon_field());
     if ctx.printer.format == Format::Table {
+        if source == FieldSource::Catalog {
+            ctx.printer.list(&rows, None, CATALOG_COLUMNS)?;
+            ctx.printer.note("Use `geekcli search choices <attr>` for a field's values; range fields are searched by their params (list_price_min, list_price_max).");
+            return Ok(());
+        }
         // checkboxes for the same attr (type=res, type=con, …) read better merged
         let mut merged: Vec<Value> = Vec::new();
         for row in rows {
@@ -497,18 +699,24 @@ fn not_found(message: String) -> Error {
     }
 }
 
-/// The form's choices for one field as `{value, label}` rows. Checkbox
-/// groups are one row per box, each carrying its own `value`.
-fn form_choice_rows(rows: &[Value], field: &str) -> Option<Vec<Value>> {
-    let matching: Vec<&Value> = rows
-        .iter()
-        .filter(|r| r.get("attr").and_then(Value::as_str) == Some(field))
-        .collect();
-    if matching.is_empty() {
-        return None;
-    }
+/// The rows for one search key: by `attr`, or by one of its `params`
+/// (`list_price_min` finds the catalog's `list_price`).
+fn field_rows<'a>(rows: &'a [Value], field: &str) -> Vec<&'a Value> {
+    rows.iter()
+        .filter(|r| {
+            r.get("attr").and_then(Value::as_str) == Some(field)
+                || r.get("params")
+                    .and_then(Value::as_array)
+                    .is_some_and(|p| p.iter().any(|k| k.as_str() == Some(field)))
+        })
+        .collect()
+}
+
+/// Choices of the given rows as `{value, label}`. Checkbox groups are one
+/// row per box, each carrying its own `value`.
+fn choice_rows(rows: &[&Value]) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
-    for row in matching {
+    for row in rows {
         if let Some(v) = row.get("value").filter(|v| !v.is_null()) {
             out.push(json!({ "value": v, "label": row["label"] }));
         }
@@ -516,21 +724,74 @@ fn form_choice_rows(rows: &[Value], field: &str) -> Option<Vec<Value>> {
             out.extend(list.iter().cloned());
         }
     }
-    Some(out)
+    out
 }
 
+/// The form's choices for a field, also looked up by the catalog row's
+/// params (the form lists `list_price_min`, the catalog `list_price`).
+fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Vec<Value>> {
+    let form = form_fields(ctx).ok()?;
+    let mut names: Vec<String> = vec![field.to_string()];
+    for row in catalog {
+        for key in ["attr", "params"] {
+            match row.get(key) {
+                Some(Value::String(s)) => names.push(s.clone()),
+                Some(Value::Array(list)) => {
+                    names.extend(list.iter().filter_map(Value::as_str).map(str::to_string));
+                }
+                _ => {}
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    let rows: Vec<&Value> = form
+        .iter()
+        .filter(|r| {
+            r.get("attr")
+                .and_then(Value::as_str)
+                .is_some_and(|a| names.iter().any(|n| n == a))
+        })
+        .collect();
+    let out = choice_rows(&rows);
+    (!out.is_empty()).then_some(out)
+}
+
+/// `search choices <field>`: the catalog's fixed list; for fields whose
+/// values come from the listings (city, subdivision …; empty in the
+/// catalog) the advanced form's default-county list; `--all` reads the
+/// autocomplete index instead.
 fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>) -> Result<()> {
     if field == POLYGON {
         return Err(Error::Usage(
             "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
         ));
     }
-    let rows = form_fields(ctx)?;
-    let Some(mut out) = form_choice_rows(&rows, field) else {
+    let fields = load_fields(ctx, true)?;
+    let matching = field_rows(&fields.rows, field);
+    if matching.is_empty() {
         return Err(not_found(format!(
             "no search field named '{field}' on this site; see `geekcli search fields`"
         )));
+    }
+    let mut out = choice_rows(&matching);
+    let mut source = match fields.source {
+        FieldSource::Catalog => "the site's field catalog",
+        FieldSource::Form => "the advanced search form",
     };
+    if out.is_empty() && fields.source == FieldSource::Catalog {
+        if let Some(form) = form_choices_for(ctx, field, &matching) {
+            out = form;
+            source = "the advanced search form (default county)";
+        }
+    }
+    if out.is_empty() {
+        eprintln!(
+            "note: '{field}' has no fixed list of values; `geekcli search choices {field} --all` lists every value the site's autocomplete knows"
+        );
+    } else {
+        ctx.printer.note(&format!("Values from {source}."));
+    }
     if let Some(needle) = needle {
         let needle = needle.to_ascii_lowercase();
         out.retain(|c| {
@@ -705,11 +966,14 @@ struct ValueCheck {
     warnings: Vec<Value>,
     /// Why the values could not be checked, if a choice source failed.
     error: Option<String>,
+    /// Where the choice lists came from, when they were read.
+    source: Option<FieldSource>,
 }
 
-/// Compare each criterion value with the field's choices: the advanced
-/// form's list, plus the autocomplete index (every county) when the form
-/// alone does not settle it. Each source is fetched at most once.
+/// Compare each criterion value with the field's choices: the catalog's
+/// list (or the advanced form's, on sites without a catalog), plus the
+/// autocomplete index (every county) when that alone does not settle it.
+/// Each source is fetched at most once.
 fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck {
     let mut by_field: Vec<(String, Vec<String>)> = Vec::new();
     for (k, v) in query {
@@ -727,8 +991,11 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
     if by_field.is_empty() {
         return result;
     }
-    let form = match form_fields(ctx) {
-        Ok(rows) => rows,
+    let fields = match load_fields(ctx, false) {
+        Ok(fields) => {
+            result.source = Some(fields.source);
+            fields
+        }
         Err(e) => {
             result.error = Some(format!("could not read the search form: {e}"));
             return result;
@@ -736,11 +1003,24 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
     };
     let mut index: Option<Value> = None;
     for (field, values) in by_field {
-        let mut candidates: Vec<String> = form_choice_rows(&form, &field)
-            .unwrap_or_default()
+        let rows = field_rows(&fields.rows, &field);
+        // the site takes true/1/yes for yes-no fields, not just the listed values
+        if rows
+            .iter()
+            .any(|r| r.get("widget").and_then(Value::as_str) == Some("boolean"))
+        {
+            continue;
+        }
+        let mut candidates: Vec<String> = choice_rows(&rows)
             .iter()
             .map(|c| cell(&c["value"]))
             .collect();
+        // the form submits `all` for "no preference" on any listed field
+        let values: Vec<String> = if candidates.is_empty() {
+            values
+        } else {
+            values.into_iter().filter(|v| v != "all").collect()
+        };
         if is_numeric_list(&candidates) {
             continue;
         }
@@ -852,6 +1132,9 @@ fn check(ctx: &Context, args: &CheckArgs) -> Result<()> {
     });
     if let Some(e) = &values.error {
         doc["value_check_error"] = json!(e);
+    }
+    if let Some(source) = values.source {
+        doc["choices_source"] = json!(source.name());
     }
     let mut no_matches = false;
     if args.count {

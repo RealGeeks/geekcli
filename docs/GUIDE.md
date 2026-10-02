@@ -379,12 +379,12 @@ API reference: [Home page](https://developers.realgeeks.com/content-api/site-pag
 
 Pages and posts often link to property searches (`/search/results/?…`).
 The site silently ignores any criterion that is not one of its search
-form fields, so a wrong key does not fail; it just returns everything.
+fields, so a wrong key does not fail; it just returns everything.
 These commands, which need no API key, make that visible:
 
 ```bash
-geekcli search fields                 # the fields this site accepts, with defaults
-geekcli search choices city           # valid values for a field
+geekcli search fields                 # every field this site accepts, with defaults
+geekcli search choices type           # valid values for a field
 geekcli search choices city -s beach  # filter the values
 geekcli search choices subdivision --all -s oak   # every value the site knows, all cities
 geekcli search choices city --all --fuzzy mclean     # the 10 closest values, ranked
@@ -403,6 +403,35 @@ geekcli search run city=Miami --strict         # fail instead of warn on ignored
 geekcli search url list_price_min=1000000 city=Miami
 geekcli search url list_price_min=1000000 city=Miami --save
 ```
+
+`search fields` reads the site's field catalog: every field its search
+accepts for the board, including ones the advanced search form leaves out,
+such as `subdivision`, `zip` or `school_district`. Each row has the field
+name (`attr`), `label`, `widget`, `default`, `choices` and:
+
+- `params`: the keys to search with. A range field is searched by its
+  bounds, never the bare name: `list_price` takes `list_price_min` and
+  `list_price_max` (`list_price=…` is ignored).
+- `dynamic`: `true` when the values come from the listings (city,
+  subdivision, zip …) rather than a fixed list.
+- `section`: `catalog`; `builtin` for `polygon`, which the CLI adds (see
+  Custom areas below).
+
+Sites that do not serve the catalog fall back to the advanced search form
+(fewer fields; `section` is `primary` or `secondary`), with a note on
+stderr.
+
+`search choices <field>` takes its values from:
+
+- the catalog, for fixed lists (`type`, price presets, `frontage` …);
+  `list_price_min` finds `list_price`'s presets;
+- the advanced form's list, for `dynamic` fields, which the catalog leaves
+  empty: the default county's cities, areas and so on;
+- with `--all`, the site's autocomplete index: every value it knows for the
+  field, across all counties. Use it for city and subdivision.
+
+A field with no list at all (free text, or a dynamic field the form does
+not show) prints nothing and a note on stderr pointing at `--all`.
 
 Criteria are `key=value` items; repeat a key for several values
 (`type=res type=con`). A whole query string or URL copied from the site is
@@ -430,9 +459,11 @@ Warnings exit 0; `--strict` turns them into exit 5 (`value_mismatch`, or
 site's choice lists cannot be read, values go unchecked (reported in
 `value_check_error`); `--strict` then exits 1 (`value_check_unavailable`)
 rather than pass a check it could not make. The
-form's own list is tried first and the site's autocomplete index (every
-county) only when the form does not settle it, so a value valid in another
-county is not flagged. A clean check without `--count` still does not prove
+field's list in the catalog (the form's on sites without one; reported in
+`choices_source`) is tried first and the site's autocomplete index (every
+county) only when that does not settle it, so a value valid in another
+county is not flagged. Yes-no fields (`pool=true`, `1` or `yes`) are not
+value-checked. A clean check without `--count` still does not prove
 the page will show listings; use `--count` or `search run`.
 
 Every content page, area page and the home page can show a saved search.
@@ -464,7 +495,7 @@ A school attendance zone, or a neighbourhood with no MLS subdivision value,
 can still be a search: `polygon` takes a boundary drawn as points, the way
 the site's map drawing tool saves it. It is a normal criterion, so it works
 in `search check`, `search run`, `search url` and `--search-criteria`. The
-site's search form does not list it; `search fields` adds it as a built-in
+site's field lists do not include it; `search fields` adds it as a built-in
 row.
 
 ```
