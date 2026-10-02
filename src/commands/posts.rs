@@ -162,10 +162,15 @@ pub struct PostFields {
     #[arg(long)]
     pub slug: Option<String>,
     /// Body as inline HTML (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML")]
+    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "html")]
     pub body: Option<String>,
     /// Read the body from a file, or `-` for stdin; `.md` files are converted from Markdown
-    #[arg(long, value_name = "FILE")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        visible_alias = "content-file",
+        alias = "html-file"
+    )]
     pub body_file: Option<String>,
     /// Treat the body as Markdown and convert it to HTML
     #[arg(long)]
