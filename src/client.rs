@@ -3,6 +3,7 @@
 //! and nothing about individual resources.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -40,6 +41,10 @@ pub struct Client {
     api_key: Option<String>,
     max_retries: u32,
     verbose: bool,
+    /// `warning:` lines already printed this run, shared by clones. Used to
+    /// skip repeats (every page of a list can carry the same warning) and to
+    /// tell `--fail-on-warnings` whether there were any.
+    warnings: Arc<Mutex<Vec<String>>>,
 }
 
 /// A successful response, decoded.
@@ -83,7 +88,41 @@ impl Client {
             api_key: target.api_key.clone(),
             max_retries,
             verbose,
+            warnings: Arc::default(),
         })
+    }
+
+    /// How many distinct API warnings this client has printed.
+    pub fn warning_count(&self) -> usize {
+        self.warnings.lock().map_or(0, |seen| seen.len())
+    }
+
+    /// Decode a response and print any `warnings` it carries to stderr.
+    /// Every request goes through here, so every command reports them.
+    fn finish(&self, response: Response) -> Result<ApiResponse> {
+        let decoded = decode(response)?;
+        self.report_warnings(&decoded.body);
+        Ok(decoded)
+    }
+
+    /// Print `warning: <message>` for each entry of a successful response's
+    /// `warnings` array. This is stderr in every output mode: agents run in
+    /// JSON mode and need it most. The body itself is left untouched, so the
+    /// warnings stay in the JSON on stdout.
+    fn report_warnings(&self, body: &Value) {
+        let lines = warning_lines(body);
+        if lines.is_empty() {
+            return;
+        }
+        let Ok(mut seen) = self.warnings.lock() else {
+            return;
+        };
+        for line in lines {
+            if !seen.contains(&line) {
+                eprintln!("warning: {}", crate::output::sanitize(&line));
+                seen.push(line);
+            }
+        }
     }
 
     pub fn root(&self) -> &str {
@@ -137,7 +176,7 @@ impl Client {
         if self.verbose {
             eprintln!("< {}", response.status());
         }
-        decode(response)
+        self.finish(response)
     }
 
     /// Resolve a path relative to `/api/v3/`. Absolute `/api/v3/...` paths
@@ -201,11 +240,11 @@ impl Client {
                 eprintln!("< {status}");
             }
             if !status.is_redirection() {
-                return decode(response);
+                return self.finish(response);
             }
 
             let Some(location) = response.headers().get("location") else {
-                return decode(response);
+                return self.finish(response);
             };
             let location = location.to_str().map_err(|_| {
                 Error::Other("login redirect had an invalid Location header".into())
@@ -315,7 +354,7 @@ impl Client {
                 attempt += 1;
                 continue;
             }
-            return decode(response);
+            return self.finish(response);
         }
     }
 
@@ -453,6 +492,40 @@ fn read_limited(response: Response) -> Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The text of each entry in a response's `warnings` array: its `message`,
+/// or the entry as JSON when it has none. `unknown_value` and
+/// `ambiguous_value` get their `suggestions` appended unless the message
+/// already names them all.
+pub fn warning_lines(body: &Value) -> Vec<String> {
+    let Some(items) = body.get("warnings").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    items.iter().map(warning_line).collect()
+}
+
+fn warning_line(warning: &Value) -> String {
+    let text = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_string);
+    if let Value::String(message) = warning {
+        return message.clone();
+    }
+    let Some(message) = warning.get("message").and_then(Value::as_str) else {
+        return warning.to_string();
+    };
+    let code = warning.get("code").and_then(Value::as_str).unwrap_or("");
+    let suggestions: Vec<String> = warning
+        .get("suggestions")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().map(text).collect())
+        .unwrap_or_default();
+    if matches!(code, "unknown_value" | "ambiguous_value")
+        && !suggestions.is_empty()
+        && !suggestions.iter().all(|s| message.contains(s.as_str()))
+    {
+        return format!("{message} (did you mean: {}?)", suggestions.join(", "));
+    }
+    message.to_string()
+}
+
 /// Turn an error response into `ApiError`, tolerating non-JSON bodies
 /// (a proxy 502, an HTML 404 from a site that has no API).
 pub fn parse_error(status: u16, text: &str, retry_after: Option<u64>) -> ApiError {
@@ -587,6 +660,37 @@ mod tests {
         assert_eq!(err.code, "validation_error");
         assert_eq!(err.fields.get("slug"), Some(&vec!["taken".to_string()]));
         assert_eq!(err.exit_code(), crate::error::exit::VALIDATION);
+    }
+
+    #[test]
+    fn warning_lines_cover_known_and_unknown_codes() {
+        let body = json!({"id": 1, "warnings": [
+            {"code": "sanitized", "field": "body", "removed": ["script"],
+             "message": "removed <script> from body"},
+            {"code": "unknown_value", "field": "search", "criterion": "city",
+             "value": "Miamy", "message": "unknown city 'Miamy'",
+             "suggestions": ["Miami", "Miami Beach"]},
+            {"code": "ambiguous_value", "message": "did you mean Miami or Miami Beach?",
+             "suggestions": ["Miami", "Miami Beach"]},
+            {"code": "brand_new", "message": "something new"},
+            {"code": "no_message", "field": "x"},
+        ]});
+        assert_eq!(
+            warning_lines(&body),
+            vec![
+                "removed <script> from body".to_string(),
+                "unknown city 'Miamy' (did you mean: Miami, Miami Beach?)".to_string(),
+                "did you mean Miami or Miami Beach?".to_string(),
+                "something new".to_string(),
+                r#"{"code":"no_message","field":"x"}"#.to_string(),
+            ]
+        );
+        assert!(matches!(warning_lines(&json!({"id": 1})).as_slice(), []));
+        assert!(matches!(
+            warning_lines(&json!({"warnings": []})).as_slice(),
+            []
+        ));
+        assert!(matches!(warning_lines(&json!([1, 2])).as_slice(), []));
     }
 
     #[test]
