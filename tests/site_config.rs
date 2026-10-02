@@ -950,7 +950,7 @@ fn page_heading_is_an_alias_for_search_header() {
     let home = server
         .mock("PATCH", "/api/v3/content/home-page/")
         .match_body(Matcher::Json(
-            json!({"search_header": "Jupiter Homes for Sale"}),
+            json!({"search_header": "Riverside Homes for Sale"}),
         ))
         .with_body(r#"{"id":1,"url":"https://x/"}"#)
         .create();
@@ -959,7 +959,7 @@ fn page_heading_is_an_alias_for_search_header() {
             "home-page",
             "update",
             "--page-heading",
-            "Jupiter Homes for Sale",
+            "Riverside Homes for Sale",
         ])
         .assert()
         .success();
@@ -971,7 +971,9 @@ fn page_heading_is_an_alias_for_search_header() {
         .create();
     let page = server
         .mock("PATCH", "/api/v3/content/pages/7/")
-        .match_body(Matcher::Json(json!({"search_header": "Buying in Jupiter"})))
+        .match_body(Matcher::Json(
+            json!({"search_header": "Buying in Riverside"}),
+        ))
         .with_body(r#"{"id":7,"path":"/buying/","url":"https://x/buying/"}"#)
         .create();
     cmd(&server, &dir)
@@ -980,7 +982,7 @@ fn page_heading_is_an_alias_for_search_header() {
             "update",
             "7",
             "--page-heading",
-            "Buying in Jupiter",
+            "Buying in Riverside",
         ])
         .assert()
         .success();
