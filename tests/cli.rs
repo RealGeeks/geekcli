@@ -616,6 +616,90 @@ fn guide_and_help_are_available() {
     env.cmd().args(["completions", "zsh"]).assert().success();
 }
 
+/// `--help` as (heading, flags) pairs, in the order printed.
+fn help_sections(env: &Env, args: &[&str]) -> Vec<(String, Vec<String>)> {
+    let out = env
+        .cmd()
+        .args(args)
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    for line in String::from_utf8_lossy(&out).lines() {
+        if let Some(heading) = line.strip_suffix(':').filter(|l| !l.starts_with(' ')) {
+            sections.push((heading.to_string(), Vec::new()));
+        } else if let Some((_, flags)) = sections.last_mut() {
+            let flag = line
+                .split_whitespace()
+                .find(|w| w.starts_with("--"))
+                .filter(|_| line.starts_with("  ") && !line.starts_with("          "));
+            if let Some(flag) = flag {
+                flags.push(flag.trim_end_matches(',').to_string());
+            }
+        }
+    }
+    sections
+}
+
+fn assert_required_first(env: &Env, args: &[&str], required: &[&str]) {
+    let sections = help_sections(env, args);
+    let headings: Vec<&str> = sections.iter().map(|(h, _)| h.as_str()).collect();
+    let custom: Vec<&str> = headings
+        .iter()
+        .copied()
+        .filter(|h| !["Arguments", "Options", "Notes"].contains(h))
+        .collect();
+    assert_eq!(custom.first(), Some(&"Required on create"), "{headings:?}");
+    assert_eq!(custom.last(), Some(&"Global options"), "{headings:?}");
+    let flags = &sections
+        .iter()
+        .find(|(h, _)| h == "Required on create")
+        .unwrap()
+        .1;
+    for flag in required {
+        assert!(flags.iter().any(|f| f == flag), "{flag} not in {flags:?}");
+    }
+    assert_eq!(flags.len(), required.len(), "{flags:?}");
+}
+
+#[test]
+fn help_groups_required_on_create_flags_first() {
+    let env = Env::new();
+    assert_required_first(
+        &env,
+        &["area-pages", "create"],
+        &["--slug", "--anchor-text", "--area-name"],
+    );
+    assert_required_first(
+        &env,
+        &["area-pages", "update"],
+        &["--slug", "--anchor-text", "--area-name"],
+    );
+    assert_required_first(&env, &["pages", "create"], &["--slug", "--anchor-text"]);
+    assert_required_first(
+        &env,
+        &["agent-pages", "create"],
+        &["--slug", "--anchor-text"],
+    );
+    assert_required_first(
+        &env,
+        &["posts", "create"],
+        &["--title", "--slug", "--content", "--content-file"],
+    );
+
+    let sections = help_sections(&env, &["area-pages", "create"]);
+    let headings: Vec<&str> = sections.iter().map(|(h, _)| h.as_str()).collect();
+    for heading in ["Content", "Search & listings", "SEO", "Layout & display"] {
+        assert!(
+            headings.contains(&heading),
+            "{heading} missing: {headings:?}"
+        );
+    }
+}
+
 #[test]
 fn guide_topics_and_sections() {
     let env = Env::new();

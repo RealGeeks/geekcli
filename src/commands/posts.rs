@@ -157,9 +157,11 @@ pub struct ListArgs {
 pub struct PostFields {
     /// Post title (required on create)
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub title: Option<String>,
     /// URL slug, unique per site (required on create)
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub slug: Option<String>,
     /// Post body as inline HTML (or Markdown with --markdown); `body` in the API
     #[arg(
@@ -168,6 +170,7 @@ pub struct PostFields {
         visible_alias = "body",
         alias = "html"
     )]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub body: Option<String>,
     /// Read the post body from a file, or `-` for stdin; `.md` files are converted from Markdown
     #[arg(
@@ -176,39 +179,51 @@ pub struct PostFields {
         visible_alias = "body-file",
         alias = "html-file"
     )]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub body_file: Option<String>,
     /// Treat the body as Markdown and convert it to HTML
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub markdown: bool,
     /// draft or published (create defaults to draft)
     #[arg(long, value_enum)]
+    #[arg(help_heading = super::heading::PUBLISHING)]
     pub status: Option<Status>,
     /// Publish date, ISO-8601 (a future date schedules the post)
     #[arg(long, value_name = "DATETIME")]
+    #[arg(help_heading = super::heading::PUBLISHING)]
     pub publish: Option<String>,
     /// Category id or slug; repeat or comma-separate for several. Replaces the whole set.
     #[arg(long = "category", value_name = "ID_OR_SLUG", value_delimiter = ',')]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub categories: Option<Vec<String>>,
     /// Create any category slug that does not exist yet
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub create_categories: bool,
     /// HTML <title> override
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub page_title: Option<String>,
     /// SEO description
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_description: Option<String>,
     /// SEO keywords
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_keywords: Option<String>,
     /// Image URL used when the post is shared on social media
     #[arg(long, value_name = "URL")]
+    #[arg(help_heading = super::heading::SEO)]
     pub facebook_image: Option<String>,
     /// Allow comments on the post (default true)
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
+    #[arg(help_heading = super::heading::PUBLISHING)]
     pub allow_comments: Option<bool>,
     /// Add rel=nofollow to links in comments (default true)
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
+    #[arg(help_heading = super::heading::PUBLISHING)]
     pub nofollow_comments: Option<bool>,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]
@@ -234,6 +249,7 @@ pub struct UpdateArgs {
         value_delimiter = ',',
         conflicts_with = "categories"
     )]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub add_category: Vec<String>,
     /// Remove these categories from the post
     #[arg(
@@ -242,9 +258,11 @@ pub struct UpdateArgs {
         value_delimiter = ',',
         conflicts_with = "categories"
     )]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub remove_category: Vec<String>,
     /// Remove every category from the post
     #[arg(long, conflicts_with_all = ["categories", "add_category", "remove_category"])]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub clear_categories: bool,
     /// Send a full replace (PUT): fields you omit reset to their defaults
     #[arg(long)]

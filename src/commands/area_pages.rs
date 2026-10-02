@@ -103,8 +103,10 @@ pub struct FieldArgs {
     pub fields: TreeFields,
     /// Display name of the area for headers and titles (required on create); a label only, it does not filter listings
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub area_name: Option<String>,
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub featured: Option<bool>,
 }
 

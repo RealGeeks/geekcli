@@ -160,47 +160,61 @@ impl TreeListArgs {
 pub struct TreeFields {
     /// URL segment; letters, numbers, `-`, `_`
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub slug: Option<String>,
     /// Parent page: id, path (/resources/), slug, or `null` for top level
     #[arg(long, value_name = "ID_PATH_OR_NULL")]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub parent: Option<String>,
     /// Page name used in navigation (required on create)
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub anchor_text: Option<String>,
     /// HTML <title> and page heading
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub title: Option<String>,
     /// SEO description
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_description: Option<String>,
     /// SEO keywords
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_keywords: Option<String>,
     /// Content as inline HTML (or Markdown with --markdown)
     #[arg(long, value_name = "HTML", aliases = ["body", "html"])]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content: Option<String>,
     /// Read the content from a file, or `-` for stdin; `.md` files are converted from Markdown
     #[arg(long, value_name = "FILE", aliases = ["body-file", "html-file"])]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content_file: Option<String>,
     /// Treat the content as Markdown and convert it to HTML
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub markdown: bool,
     /// The page's main hero heading (above the search form); unset, the site shows the BIG_SEARCH_TITLE setting ("Real Estate Search"). Use the page's target keyword
     #[arg(long, visible_alias = "page-heading", value_name = "TEXT")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_header: Option<String>,
     /// Heading above the property listings
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub listing_header: Option<String>,
     /// How many listings to show (default 12)
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub number_of_properties: Option<u32>,
     /// Show listings above or below the content (default below)
     #[arg(long, value_enum)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub property_display_location: Option<DisplayLocation>,
     #[command(flatten)]
     pub attach: AttachArgs,
     /// Template area, `Name=value` (see `templates list`); repeatable. `Name=null` clears it
     #[arg(long = "area", value_name = "NAME=VALUE")]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub areas: Vec<String>,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]
@@ -239,18 +253,23 @@ pub fn areas_object(items: &[String]) -> Result<Value> {
 pub struct AttachArgs {
     /// Sidebar to show: id, name, or `null` to detach
     #[arg(long, value_name = "ID_NAME_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub sidebar: Option<String>,
     /// Saved search to show: its short id (from search URLs), numeric id, or `null`
     #[arg(long, value_name = "ID_OR_NULL", conflicts_with = "search_criteria")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search: Option<String>,
     /// Build the page's search from criteria, key=value; repeatable (see `search fields`)
     #[arg(long = "search-criteria", value_name = "KEY=VALUE")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_criteria: Vec<String>,
     /// Footer to show: id, name, or `null` for the default
     #[arg(long, value_name = "ID_NAME_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub footer: Option<String>,
     /// Which search form the page shows: default or typeahead
     #[arg(long, value_name = "TYPE")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_form_type: Option<String>,
     /// Saved search whose criteria pre-fill the form: short id, numeric id, or `null`
     #[arg(
@@ -258,18 +277,23 @@ pub struct AttachArgs {
         value_name = "ID_OR_NULL",
         conflicts_with = "search_field_defaults_criteria"
     )]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_field_defaults: Option<String>,
     /// Pre-fill the search form from criteria, key=value; repeatable
     #[arg(long = "search-field-defaults-criteria", value_name = "KEY=VALUE")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_field_defaults_criteria: Vec<String>,
     /// Header image: a file URL (.jpg/.png/.mp4), `none` to hide it, or `null` for the site's
     #[arg(long, value_name = "URL_NONE_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub landscape: Option<String>,
     /// Alt text for the header image override
     #[arg(long, value_name = "TEXT")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub landscape_alt: Option<String>,
     /// Override type when the extension is ambiguous: image or video
     #[arg(long, value_name = "TYPE")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub landscape_content_type: Option<String>,
 }
 
@@ -401,6 +425,7 @@ pub struct CreateArgs {
     pub fields: TreeFields,
     /// Page template; see `geekcli templates list`
     #[arg(long)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub template: Option<String>,
 }
 
@@ -412,6 +437,7 @@ pub struct UpdateArgs {
     pub fields: TreeFields,
     /// Page template; see `geekcli templates list`
     #[arg(long)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub template: Option<String>,
     /// Send a full replace (PUT): fields you omit reset to their defaults
     #[arg(long)]
