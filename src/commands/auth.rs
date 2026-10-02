@@ -14,6 +14,7 @@ use crate::output::{col, Column, Format, Printer};
 
 pub const SITE_COLUMNS: &[Column] = &[
     col("site", "/site"),
+    col("aliases", "/aliases"),
     col("default", "/default"),
     col("key", "/key_name"),
     col("prefix", "/prefix"),
@@ -57,10 +58,17 @@ pub enum AuthSub {
     /// Show the current key and site (`GET /me/`)
     Status,
     /// List the sites with stored keys
-    Sites,
+    #[command(after_help = "Notes:
+  - A site is stored under the name given to `auth login --site`; its live domain (from `/me`) is kept as an alias, and `--site` accepts either.
+  - Sites stored before aliases existed have none; `--refresh` asks each site's `/me` for its live domain and records it.")]
+    Sites {
+        /// Ask each stored site's `/me` for its live domain and record it as an alias
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Make a stored site the default
     Use {
-        /// Site domain
+        /// Site domain (the login name or the live domain)
         site: String,
     },
 }
@@ -107,15 +115,26 @@ pub fn run(env: &mut AuthEnv<'_>, cmd: AuthCommand) -> Result<()> {
                 printer: env.printer,
                 yes: false,
             })
+            .map_err(|err| crate::cli::with_refresh_hint(err, env.config, env.overrides))
         }
-        AuthSub::Sites => sites(env),
-        AuthSub::Use { site } => {
-            let domain = config::normalize_domain(&site);
-            if env.config.site(&domain).is_none() {
-                return Err(Error::Config(format!(
-                    "no stored key for {domain}; run `geekcli auth login --site {domain}`"
-                )));
+        AuthSub::Sites { refresh } => {
+            if refresh {
+                refresh_aliases(env)?;
             }
+            sites(env)
+        }
+        AuthSub::Use { site } => {
+            let Some((domain, _)) = env.config.lookup(&site)? else {
+                let domain = config::normalize_domain(&site);
+                return Err(Error::Config(
+                    env.config.refresh_hint(&domain).unwrap_or_else(|| {
+                        format!(
+                            "no stored key for {domain}; run `geekcli auth login --site {domain}`"
+                        )
+                    }),
+                ));
+            };
+            let domain = domain.to_string();
             env.config.default_site = Some(domain.clone());
             env.config.save()?;
             env.printer.note(&format!("Default site is now {domain}"));
@@ -193,6 +212,8 @@ fn login(env: &mut AuthEnv<'_>, args: &LoginArgs) -> Result<()> {
     )?;
     let me = authed.get("me/", &Query::new())?.body;
     let key_info = me.get("api_key").cloned().unwrap_or(Value::Null);
+    // The live domain is kept as an alias so `--site` accepts either name.
+    let aliases = config::aliases_from_me(&me, &domain);
 
     let stored_base = env.overrides.base_url.clone();
     env.config.put_site(
@@ -218,12 +239,22 @@ fn login(env: &mut AuthEnv<'_>, args: &LoginArgs) -> Result<()> {
                 .get("expires_at")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            aliases: aliases.clone(),
         },
     );
     let path = env.config.save()?;
 
+    let live = me
+        .pointer("/site/domain")
+        .and_then(Value::as_str)
+        .map(config::normalize_domain)
+        .filter(|live| !live.is_empty() && *live != domain);
+    let shown = live.map_or_else(
+        || domain.clone(),
+        |live| format!("{domain} (live domain: {live})"),
+    );
     env.printer.note(&format!(
-        "Logged in to {domain}; key stored in {}",
+        "Logged in to {shown}; key stored in {}",
         path.display()
     ));
     if let Some(minted) = &minted {
@@ -234,6 +265,7 @@ fn login(env: &mut AuthEnv<'_>, args: &LoginArgs) -> Result<()> {
     let summary = json!({
         "site": me.get("site").cloned().unwrap_or(Value::Null),
         "api_key": key_info,
+        "aliases": aliases,
         "config_path": path.display().to_string(),
         "default": env.config.default_site.as_deref() == Some(domain.as_str()),
     });
@@ -290,6 +322,7 @@ fn sites(env: &AuthEnv<'_>) -> Result<()> {
         .map(|(domain, site)| {
             json!({
                 "site": domain,
+                "aliases": site.aliases,
                 "default": env.config.default_site.as_deref() == Some(domain.as_str()),
                 "key_name": site.key_name,
                 "prefix": key_prefix(&site.api_key),
@@ -308,6 +341,44 @@ fn sites(env: &AuthEnv<'_>) -> Result<()> {
         return Ok(());
     }
     env.printer.list(&rows, None, SITE_COLUMNS)
+}
+
+/// Fill each stored site's aliases from its `/me`. A site that cannot be
+/// reached keeps what it had; the others are still saved.
+fn refresh_aliases(env: &mut AuthEnv<'_>) -> Result<()> {
+    let keys: Vec<String> = env.config.sites.keys().cloned().collect();
+    let mut changed = false;
+    for key in keys {
+        let Some(site) = env.config.sites.get(&key) else {
+            continue;
+        };
+        let target = Target {
+            domain: key.clone(),
+            base_url: env
+                .overrides
+                .base_url
+                .clone()
+                .or_else(|| site.base_url.clone())
+                .unwrap_or_else(|| format!("https://{key}")),
+            api_key: Some(site.api_key.clone()),
+        };
+        let me = Client::new(&target, env.max_retries, env.verbose)
+            .and_then(|client| client.get("me/", &Query::new()));
+        match me {
+            Ok(me) => {
+                let aliases = config::aliases_from_me(&me.body, &key);
+                if let Some(site) = env.config.sites.get_mut(&key) {
+                    changed |= site.aliases != aliases;
+                    site.aliases = aliases;
+                }
+            }
+            Err(err) => env.printer.note(&format!("Could not refresh {key}: {err}")),
+        }
+    }
+    if changed {
+        env.config.save()?;
+    }
+    Ok(())
 }
 
 /// `rg_live_abcdEFGH…` — enough to match the admin's key list, never the secret.

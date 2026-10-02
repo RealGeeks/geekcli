@@ -232,12 +232,23 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 | Command::Completions { .. }
                 | Command::Auth(_) => Ok(()),
             };
-            result?;
+            result.map_err(|err| with_refresh_hint(err, &config, &overrides))?;
             match ctx.client.warning_count() {
                 n if n > 0 && cli.global.fail_on_warnings => Err(Error::Warnings(n)),
                 _ => Ok(()),
             }
         }
+    }
+}
+
+/// A `--site` that matched no stored key may be the live domain of a site
+/// stored before aliases were recorded; say how to record them.
+pub fn with_refresh_hint(err: Error, config: &Config, overrides: &Overrides) -> Error {
+    match (&err, overrides.site.as_deref()) {
+        (Error::NotLoggedIn(_), Some(site)) if overrides.api_key.is_none() => {
+            config.refresh_hint(site).map_or(err, Error::NotLoggedIn)
+        }
+        _ => err,
     }
 }
 
