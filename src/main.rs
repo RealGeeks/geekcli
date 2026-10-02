@@ -1,6 +1,7 @@
 use clap::Parser;
 
 use geekcli::cli::{run, Cli};
+use geekcli::error::Error;
 use geekcli::output::{print_error, Format, Printer};
 
 const ISSUES: &str = "https://github.com/RealGeeks/geekcli/issues";
@@ -10,6 +11,9 @@ fn main() {
     let format = Printer::new(cli.global.format(), false).format;
     install_panic_hook(format);
     if let Err(err) = run(cli) {
+        if matches!(err, Error::BrokenPipe) {
+            std::process::exit(0);
+        }
         let format = if matches!(format, Format::Jsonl) {
             Format::Json
         } else {
@@ -34,6 +38,11 @@ fn install_panic_hook(format: Format) {
             .location()
             .map(|l| format!(" at {}:{}", l.file(), l.line()))
             .unwrap_or_default();
+        // `print!`/`println!` panic when stdout's reader has gone (`| head`);
+        // stop quietly like other command-line tools instead of reporting a bug.
+        if detail.starts_with("failed printing to stdout") {
+            std::process::exit(0);
+        }
         let message = format!("geekcli hit an internal error{location}: {detail}");
         if format == Format::Table {
             eprintln!("error: {message}\n  please report it: {ISSUES}");

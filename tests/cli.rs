@@ -1354,3 +1354,53 @@ fn area_pages_help_explains_area_name_and_publishing() {
         .stdout(predicate::str::contains("public as soon as it is created"))
         .stdout(predicate::str::contains("--no-search"));
 }
+
+/// `geekcli … | head` must not report an internal error when `head` exits
+/// first. The read end is closed before geekcli writes, so every write fails.
+fn run_with_closed_stdout(args: &[&str]) -> std::process::Output {
+    use std::process::{Command as StdCommand, Stdio};
+    let config = tempfile::tempdir().unwrap();
+    let mut child = StdCommand::new(env!("CARGO_BIN_EXE_geekcli"))
+        .args(args)
+        .env("GEEKCLI_CONFIG_DIR", config.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn closed_stdout_exits_quietly_for_print_output() {
+    // the guide is written with print!, which panics on a closed pipe
+    let out = run_with_closed_stdout(&["guide"]);
+    assert!(
+        out.status.success(),
+        "status {:?}, stderr {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn closed_stdout_exits_quietly_for_printer_output() {
+    // the result printer uses writeln!, which returns the error instead
+    let out = run_with_closed_stdout(&["auth", "sites", "--json"]);
+    assert!(
+        out.status.success(),
+        "status {:?}, stderr {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
