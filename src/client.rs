@@ -141,6 +141,14 @@ impl Client {
         format!("{}/{}", self.site, path.trim_start_matches('/'))
     }
 
+    /// The site's host name, lower-cased (`www.example.com`), when the base
+    /// URL parses.
+    pub fn site_host(&self) -> Option<String> {
+        url::Url::parse(&self.site)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    }
+
     /// GET a site-level (unauthenticated) endpoint such as the legacy
     /// `/api/v2/search/`.
     pub fn site_get(&self, path: &str, query: &Query) -> Result<ApiResponse> {
