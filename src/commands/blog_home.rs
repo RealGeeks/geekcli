@@ -40,18 +40,24 @@ pub enum BlogSub {
 pub struct UpdateArgs {
     /// Browser and SEO title (127 characters max)
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub title: Option<String>,
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_description: Option<String>,
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_keywords: Option<String>,
     /// HTML shown above the post list (or Markdown with --markdown)
     #[arg(long, value_name = "HTML")]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content: Option<String>,
     /// Read the content from a file, or `-` for stdin; `.md` converts from Markdown
     #[arg(long, value_name = "FILE")]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content_file: Option<String>,
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub markdown: bool,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]
