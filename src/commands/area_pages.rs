@@ -25,6 +25,7 @@ pub const DETAIL_COLUMNS: &[Column] = &[
     col("area_name", "/area_name"),
     col("anchor_text", "/anchor_text"),
     col("title", "/title"),
+    col("content", "/content"),
     col("featured", "/featured"),
     col("parent", "/parent"),
     col("level", "/level"),
@@ -132,12 +133,7 @@ pub fn run(ctx: &Context, cmd: AreaPagesCommand) -> Result<()> {
             print_written(ctx, &created, DETAIL_COLUMNS, "Created")
         }
         AreaPagesSub::Update(args) => {
-            let id = id_of(&pages::resolve(
-                ctx,
-                AREA_PATH,
-                &args.reference,
-                "area page",
-            )?)?;
+            let id = pages::resolve_id(ctx, AREA_PATH, &args.reference, "area page")?;
             let mut payload = args.fields.fields.payload(ctx, AREA_PATH)?;
             payload
                 .set("area_name", args.fields.area_name.as_deref())
@@ -164,15 +160,15 @@ pub fn run(ctx: &Context, cmd: AreaPagesCommand) -> Result<()> {
             pages::page_search(ctx, AREA_PATH, &reference, "area page")
         }
         AreaPagesSub::Revisions { reference, limit } => {
-            let id = id_of(&pages::resolve(ctx, AREA_PATH, &reference, "area page")?)?;
+            let id = pages::resolve_id(ctx, AREA_PATH, &reference, "area page")?;
             super::revisions::list(ctx, &pages::detail_path(AREA_PATH, id), limit)
         }
         AreaPagesSub::Revision { reference, rev } => {
-            let id = id_of(&pages::resolve(ctx, AREA_PATH, &reference, "area page")?)?;
+            let id = pages::resolve_id(ctx, AREA_PATH, &reference, "area page")?;
             super::revisions::show(ctx, &pages::detail_path(AREA_PATH, id), rev)
         }
         AreaPagesSub::Revert { reference, rev } => {
-            let page = pages::resolve(ctx, AREA_PATH, &reference, "area page")?;
+            let page = pages::find(ctx, AREA_PATH, &reference, "area page")?;
             let label = format!(
                 "area page {}",
                 page.get("path").and_then(Value::as_str).unwrap_or("")
