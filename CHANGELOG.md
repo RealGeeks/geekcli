@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/RealGeeks/geekcli/compare/v0.7.0...v0.7.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* exit quietly when the output pipe closes early ([#57](https://github.com/RealGeeks/geekcli/issues/57)) ([d76c237](https://github.com/RealGeeks/geekcli/commit/d76c2371531141913217945576393743c0f2512e))
+
 ## [0.7.0](https://github.com/RealGeeks/geekcli/compare/v0.6.0...v0.7.0) (2026-10-02)
 
 
