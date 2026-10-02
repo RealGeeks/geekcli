@@ -96,7 +96,8 @@ pub enum SearchSub {
   - Exit code 5 here means a key was ignored; `search fields` lists the keys this site takes, `search choices <field>` the values (city and subdivision lists depend on the default county; add `--all` for every county).
   - Values are checked too, for fields with a choice list (city, subdivision, type …; not prices or beds). Matching is case sensitive on the site, so `city=McLean` finds nothing when the site's value is `Mclean`. A case-only difference or an unknown value is reported in `value_warnings` (with up to 3 suggestions) and on stderr. It exits 0 unless you pass --strict, which exits 5.
   - --count also runs the search and reports how many listings match; 0 is a warning (exit 5 with --strict). A clean check without --count does not prove the page will show listings.
-  - Paste a whole URL to check a link already on a page.")]
+  - Paste a whole URL to check a link already on a page.
+  - polygon=lat,lng;lat,lng;… searches a custom map area (latitude first, first point repeated at the end); see `geekcli guide polygon`.")]
     Check(CheckArgs),
     /// Run a search and show matching properties
     Run(RunArgs),
@@ -213,7 +214,119 @@ pub fn parse_criteria(items: &[String]) -> Result<Query> {
     if query.is_empty() {
         return Err(Error::Usage("no criteria given".into()));
     }
+    for (k, v) in &query {
+        if k == POLYGON {
+            for warning in check_polygon(v)? {
+                eprintln!("warning: polygon: {warning}");
+            }
+        }
+    }
     Ok(query)
+}
+
+// ----------------------------------------------------------------- polygon
+
+/// The map-drawn area criterion. The site accepts it but its search form
+/// does not list it, so `search fields` adds it and the value is checked here.
+pub const POLYGON: &str = "polygon";
+/// Above this many points the URL gets long and the boundary is usually
+/// over-traced; warn rather than fail.
+const POLYGON_MAX_POINTS: usize = 100;
+/// No real-estate search sits south of this latitude. A US longitude given
+/// first (lng,lat) lands here, so it is the swapped-order tell.
+const POLYGON_SWAP_LAT: f64 = -60.0;
+
+/// Check a `polygon=lat,lng;lat,lng;…` value. Malformed values are a usage
+/// error; returns warnings for values the site takes but that are probably
+/// not what was meant. The value itself is never rewritten.
+///
+/// Heuristics, kept simple on purpose:
+/// - not closed: the first point is not repeated at the end;
+/// - swapped: a point south of latitude -60, or a latitude out of range
+///   whose longitude would be a valid latitude (lng,lat order);
+/// - large: more than 100 points.
+pub fn check_polygon(value: &str) -> Result<Vec<String>> {
+    let usage = |why: String| {
+        Error::Usage(format!(
+            "polygon: {why}. Expected lat,lng;lat,lng;… in decimal degrees, latitude first, at least 3 points (see `geekcli guide polygon`)"
+        ))
+    };
+    let mut points: Vec<(f64, f64)> = Vec::new();
+    for (i, raw) in value.split(';').enumerate() {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let n = i + 1;
+        let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
+        let [lat, lng] = parts[..] else {
+            return Err(usage(format!("point {n} '{raw}' is not a lat,lng pair")));
+        };
+        let number = |text: &str| text.parse::<f64>().ok().filter(|f| f.is_finite());
+        let (Some(lat), Some(lng)) = (number(lat), number(lng)) else {
+            return Err(usage(format!("point {n} '{raw}' is not numeric")));
+        };
+        if !(-90.0..=90.0).contains(&lat) {
+            let hint = if (-90.0..=90.0).contains(&lng) {
+                " (it looks like lng,lat; latitude comes first)"
+            } else {
+                ""
+            };
+            return Err(usage(format!(
+                "point {n} latitude {lat} is outside -90..90{hint}"
+            )));
+        }
+        if !(-180.0..=180.0).contains(&lng) {
+            return Err(usage(format!(
+                "point {n} longitude {lng} is outside -180..180"
+            )));
+        }
+        points.push((lat, lng));
+    }
+    let mut distinct: Vec<(f64, f64)> = Vec::new();
+    for p in &points {
+        if !distinct.contains(p) {
+            distinct.push(*p);
+        }
+    }
+    if distinct.len() < 3 {
+        return Err(usage(format!("{} distinct point(s) given", distinct.len())));
+    }
+
+    let mut warnings = Vec::new();
+    if points.first() != points.last() {
+        let (lat, lng) = points[0];
+        warnings.push(format!(
+            "the ring is not closed; repeat the first point ({lat},{lng}) at the end, as the map tool does"
+        ));
+    }
+    if points.iter().any(|(lat, _)| *lat < POLYGON_SWAP_LAT) {
+        warnings.push(format!(
+            "a latitude is below {POLYGON_SWAP_LAT}, which usually means lng,lat order; latitude comes first"
+        ));
+    }
+    if points.len() > POLYGON_MAX_POINTS {
+        warnings.push(format!(
+            "{} points; keep it to about {POLYGON_MAX_POINTS} or fewer by simplifying the boundary",
+            points.len()
+        ));
+    }
+    Ok(warnings)
+}
+
+/// The `search fields` row for `polygon`, shaped like the form rows.
+fn polygon_field() -> Value {
+    json!({
+        "attr": POLYGON,
+        "label": "Custom area: lat,lng;lat,lng;… (built in, not on the site's form; see `geekcli guide polygon`)",
+        "section": "builtin",
+        "widget": "polygon",
+        "default": Value::Null,
+        "value": Value::Null,
+        "depends_on": Value::Null,
+        "choices_count": 0,
+        "choices": [],
+    })
 }
 
 fn is_control(key: &str) -> bool {
@@ -350,7 +463,8 @@ fn form_fields(ctx: &Context) -> Result<Vec<Value>> {
 }
 
 fn fields(ctx: &Context) -> Result<()> {
-    let rows = form_fields(ctx)?;
+    let mut rows = form_fields(ctx)?;
+    rows.push(polygon_field());
     if ctx.printer.format == Format::Table {
         // checkboxes for the same attr (type=res, type=con, …) read better merged
         let mut merged: Vec<Value> = Vec::new();
@@ -406,6 +520,11 @@ fn form_choice_rows(rows: &[Value], field: &str) -> Option<Vec<Value>> {
 }
 
 fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>) -> Result<()> {
+    if field == POLYGON {
+        return Err(Error::Usage(
+            "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
+        ));
+    }
     let rows = form_fields(ctx)?;
     let Some(mut out) = form_choice_rows(&rows, field) else {
         return Err(not_found(format!(
@@ -594,7 +713,8 @@ struct ValueCheck {
 fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck {
     let mut by_field: Vec<(String, Vec<String>)> = Vec::new();
     for (k, v) in query {
-        if is_control(k) || ignored.contains(k) || v.is_empty() {
+        // polygon is free-form (validated by check_polygon), not a choice
+        if is_control(k) || ignored.contains(k) || v.is_empty() || k == POLYGON {
             continue;
         }
         match by_field.iter_mut().find(|(f, _)| f == k) {
@@ -1025,6 +1145,48 @@ mod tests {
             parse_criteria(&["nonsense".into()]),
             Err(Error::Usage(_))
         ));
+    }
+
+    #[test]
+    fn polygon_values() {
+        let closed = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902;38.78512,-77.24901";
+        assert!(matches!(
+            check_polygon(closed).unwrap_or_default().as_slice(),
+            []
+        ));
+        let open = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902";
+        let w = check_polygon(open).unwrap_or_default();
+        assert!(w.len() == 1 && w[0].contains("not closed"), "{w:?}");
+        let swapped = "-77.24901,38.78512;-77.21544,38.79870;-77.19902,38.76632;-77.24901,38.78512";
+        let w = check_polygon(swapped).unwrap_or_default();
+        assert!(w.len() == 1 && w[0].contains("lng,lat"), "{w:?}");
+        let many: Vec<String> = (0..120)
+            .map(|i| format!("{},{}", f64::from(i) / 1000.0, f64::from(i % 7) / 1000.0))
+            .collect();
+        let w = check_polygon(&many.join(";")).unwrap_or_default();
+        assert!(w.iter().any(|m| m.contains("120 points")), "{w:?}");
+        for bad in [
+            "",
+            "38.7,-77.2;38.8,-77.1",
+            "38.7,-77.2;38.7,-77.2;38.7,-77.2;38.7,-77.2",
+            "38.7,-77.2;38.8;38.6,-77.0",
+            "38.7,-77.2;north,-77.1;38.6,-77.0",
+            "38.7,-77.2;38.8,-77.1,5;38.6,-77.0",
+            "38.7,-77.2;-120.8,38.1;38.6,-77.0",
+            "38.7,-77.2;38.8,-190.1;38.6,-77.0",
+            "38.7,-77.2;NaN,-77.1;38.6,-77.0",
+        ] {
+            assert!(
+                matches!(check_polygon(bad), Err(Error::Usage(_))),
+                "accepted {bad:?}"
+            );
+        }
+        assert!(matches!(
+            parse_criteria(&["polygon=1,2;3,4".into()]),
+            Err(Error::Usage(_))
+        ));
+        let q = parse_criteria(&[format!("polygon={closed}")]).unwrap_or_default();
+        assert_eq!(q, vec![("polygon".to_string(), closed.to_string())]);
     }
 
     #[test]
