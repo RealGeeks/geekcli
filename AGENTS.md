@@ -46,8 +46,9 @@ The rules that keep a live site safe:
 4. `update` only changes the flags you pass. Avoid `--replace`.
 5. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
    page, post or footer, so a bad result is one `revert` away.
-6. Check search criteria with `search check` before putting them on a page;
-   the site silently drops criteria it does not know.
+6. Check search criteria with `search check --count --strict` before putting
+   them on a page; the site silently drops criteria it does not know, and a
+   value in the wrong case (`McLean` for `Mclean`) matches nothing.
 7. After a visible change, look at it: `geekcli snapshot <path> --full`
    (and `--mobile`), or assert on the DOM with `geekcli inspect`.
 8. Anything the API cannot reach, report it to your human rather than
