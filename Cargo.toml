@@ -2,13 +2,15 @@
 name = "geekcli"
 version = "0.5.0"
 edition = "2021"
+rust-version = "1.88"
 description = "The Real Geeks command line: manage a Real Geeks website from scripts and AI agents"
 license = "MIT"
-repository = "https://github.com/realgeeks/geekcli"
-homepage = "https://github.com/realgeeks/geekcli"
+repository = "https://github.com/RealGeeks/geekcli"
+homepage = "https://developers.realgeeks.com/content-api/"
 readme = "README.md"
 keywords = ["real-estate", "cms", "cli", "ai-agents", "realgeeks"]
 categories = ["command-line-utilities"]
+include = ["/src", "/docs/GUIDE.md", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [lib]
 name = "geekcli"
@@ -60,3 +62,8 @@ must_use_candidate = "allow"
 too_many_lines = "allow"
 struct_excessive_bools = "allow"
 doc_markdown = "allow"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
