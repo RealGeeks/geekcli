@@ -5,6 +5,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 
 use clap::{Args, Subcommand};
+use reqwest::Method;
 use serde_json::{json, Value};
 
 use super::{confirm, parse_bool, Context, Payload};
@@ -548,7 +549,15 @@ fn add(ctx: &Context, args: &AddArgs) -> Result<()> {
     if let Some(at) = args.at {
         link["order"] = Value::from(at);
     }
-    let updated = ctx.client.post(&links_path(&bar)?, &link)?.body;
+    // The API refuses a duplicate URL with a 409 unless told otherwise.
+    let mut query = Query::new();
+    if args.allow_duplicate {
+        query.push(("allow_duplicate".into(), "true".into()));
+    }
+    let updated = ctx
+        .client
+        .request(&Method::POST, &links_path(&bar)?, &query, Some(&link), true)?
+        .body;
     warn_crowded(&updated);
     print_bar(ctx, &updated)
 }
