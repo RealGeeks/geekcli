@@ -247,3 +247,54 @@ fn upload_rejects_a_local_file_with_from_url() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn upload_checks_every_file_before_sending_any() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let good = dir.path().join("hero.png");
+    std::fs::write(&good, b"\x89PNG fake").unwrap();
+    let svg = dir.path().join("icon.svg");
+    std::fs::write(&svg, b"<svg/>").unwrap();
+    let big = dir.path().join("tour.mp4");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(8_000_001)
+        .unwrap();
+    let mock = server
+        .mock("POST", "/api/v3/files/upload/")
+        .with_status(201)
+        .with_body(LOGO)
+        .expect(0)
+        .create();
+    cmd(&server, &dir)
+        .args(["files", "upload", "--to", "images"])
+        .arg(&good)
+        .arg(&svg)
+        .arg(&big)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("nothing uploaded"))
+        .stderr(predicate::str::contains("icon.svg: type not accepted"))
+        .stderr(predicate::str::contains("8000001 bytes"));
+    mock.assert();
+}
+
+#[test]
+fn upload_checks_the_extension_of_name() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("hero.png");
+    std::fs::write(&local, b"\x89PNG fake").unwrap();
+    let mock = server
+        .mock("POST", "/api/v3/files/upload/")
+        .expect(0)
+        .create();
+    cmd(&server, &dir)
+        .args(["files", "upload", "--name", "page.html"])
+        .arg(&local)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("page.html: type not accepted"));
+    mock.assert();
+}

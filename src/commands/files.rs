@@ -66,7 +66,8 @@ pub enum FilesSub {
     Url { path: String },
     /// Upload one or more local files into a folder
     #[command(after_help = "Notes:
-  - The folder must exist (files mkdir). 8,000,000 bytes max; jpg/jpeg, png, gif, ico, mp4, pdf, txt, css only. HTML, SVG, XML and scripts are refused (files are served inline from a domain shared by every site); the stored type follows the extension.
+  - The folder must exist (files mkdir). 8,000,000 bytes max; jpg/jpeg, png, gif, ico, mp4, pdf, txt, css only. HTML, SVG, XML and scripts are refused (files are served inline from a domain shared by every site); the stored type follows the extension (of --name when given).
+  - Every file's type and size is checked before anything is sent: one bad file refuses the whole run (exit 2) and names each problem, so nothing is half uploaded.
   - --from-url URL makes the site fetch the file itself, e.g. to copy a file that is already on u.realgeeks.media. Only https URLs on hosts the API allows (Real Geeks media and the file CDNs of AI platforms such as ChatGPT, Grok and Perplexity) are accepted; any other host is a validation error that names the allowed hosts. AI-platform URLs rarely end in a file name, so pass --name with the right extension.
   - -q prints the public URL to use in --facebook-image, <img src>, footers and file settings such as HEADER_LOGO.
   - Header logo: Real Geeks recommends 400x86 px, PNG, horizontal or text-based; upload at 2x (800x172) for sharp screens.
@@ -313,20 +314,11 @@ fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
         ));
     }
     let folder = normalize(&args.to);
+    let planned = check_uploads(&args.files, args.name.as_deref())?;
     let mut uploaded = Vec::new();
-    for local in &args.files {
-        let path = Path::new(local);
+    for (local, file_name) in planned {
         let bytes =
-            std::fs::read(path).map_err(|e| Error::Io(format!("cannot read {local}: {e}")))?;
-        let file_name = args
-            .name
-            .clone()
-            .or_else(|| {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_string)
-            })
-            .ok_or_else(|| Error::Usage(format!("cannot determine a file name for {local}")))?;
+            std::fs::read(local).map_err(|e| Error::Io(format!("cannot read {local}: {e}")))?;
         let content_type = args
             .content_type
             .clone()
@@ -361,6 +353,64 @@ fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
     }
     let rows: Vec<Value> = uploaded.iter().map(with_dimensions).collect();
     ctx.printer.list(&rows, None, COLUMNS)
+}
+
+/// Extensions the upload endpoint accepts (lower case).
+pub const UPLOAD_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "ico", "mp4", "pdf", "txt", "css",
+];
+
+/// Largest file the upload endpoint accepts, in bytes.
+pub const UPLOAD_MAX_BYTES: u64 = 8_000_000;
+
+/// Check every local file's stored name and size before anything is sent,
+/// so a multi-file upload is refused whole instead of stopping halfway.
+/// Returns `(local path, stored name)` pairs in the order given.
+fn check_uploads<'a>(files: &'a [String], name: Option<&str>) -> Result<Vec<(&'a str, String)>> {
+    let mut planned = Vec::new();
+    let mut problems = Vec::new();
+    for local in files {
+        let path = Path::new(local);
+        let Some(file_name) = name.map(str::to_string).or_else(|| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+        }) else {
+            problems.push(format!("{local}: cannot determine a file name"));
+            continue;
+        };
+        let ext = Path::new(&file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if !ext
+            .as_deref()
+            .is_some_and(|e| UPLOAD_EXTENSIONS.contains(&e))
+        {
+            problems.push(format!(
+                "{file_name}: type not accepted (allowed: {})",
+                UPLOAD_EXTENSIONS.join(", ")
+            ));
+        }
+        match std::fs::metadata(path) {
+            Ok(meta) if !meta.is_file() => problems.push(format!("{local}: not a file")),
+            Ok(meta) if meta.len() > UPLOAD_MAX_BYTES => problems.push(format!(
+                "{local}: {} bytes is over the {UPLOAD_MAX_BYTES}-byte limit",
+                meta.len()
+            )),
+            Ok(_) => {}
+            Err(e) => problems.push(format!("cannot read {local}: {e}")),
+        }
+        planned.push((local.as_str(), file_name));
+    }
+    if problems.is_empty() {
+        Ok(planned)
+    } else {
+        Err(Error::Usage(format!(
+            "nothing uploaded; fix these first: {}",
+            problems.join("; ")
+        )))
+    }
 }
 
 /// Content type from the extension, limited to what the API accepts.

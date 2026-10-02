@@ -628,7 +628,11 @@ geekcli files delete images/2026         # a folder goes with everything in it
 Uploads are limited to 8,000,000 bytes and to jpg/jpeg, png, gif, ico,
 mp4, pdf, txt and css. HTML, SVG, XML and scripts are refused because files
 are served inline from a domain shared by every site; use the admin for
-those. The stored content type follows the extension. Whitespace and
+those. The stored content type follows the extension (of `--name` when
+given). The CLI checks every file's extension and size before sending
+any of them, so one bad file in a multi-file upload refuses the whole run
+with exit code 2 and a message naming each problem; nothing is half
+uploaded. Whitespace and
 slashes in names become `_`, and names ending in `_thumbnail`, `_small`,
 `_medium`, `_big`, `_agent` or `_fb_thumb` are reserved. An existing file
 name is a conflict (exit 6) unless `--overwrite`; a folder of that name is
