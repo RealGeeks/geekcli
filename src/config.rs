@@ -96,16 +96,29 @@ impl Config {
         Ok(path)
     }
 
+    /// Write the file atomically and privately: a new 0600 file next to it,
+    /// renamed over the old one. The key is never readable by other users,
+    /// a symlink planted at the path is replaced rather than followed, and a
+    /// crash mid-write leaves the previous file intact.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| Error::Config(format!("cannot create {}: {e}", parent.display())))?;
-        }
         let raw = toml::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("cannot serialize config: {e}")))?;
-        fs::write(path, raw)
-            .map_err(|e| Error::Config(format!("cannot write {}: {e}", path.display())))?;
-        restrict_permissions(path);
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        create_private_dir(parent)
+            .map_err(|e| Error::Config(format!("cannot create {}: {e}", parent.display())))?;
+        let tmp = parent.join(format!(
+            ".config.toml.{}.{}.tmp",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let written = write_private(&tmp, raw.as_bytes()).and_then(|()| fs::rename(&tmp, path));
+        if let Err(e) = written {
+            let _ = fs::remove_file(&tmp);
+            return Err(Error::Config(format!("cannot write {}: {e}", path.display())));
+        }
         Ok(())
     }
 
@@ -132,14 +145,33 @@ impl Config {
     }
 }
 
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+/// Create a new file readable only by its owner and write `bytes` to it.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) {}
+/// `create_dir_all`, with new directories private to the owner on Unix.
+/// (On Windows the user profile's ACL already keeps others out.)
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
 
 /// Accept `www.example.com`, `https://www.example.com/`, `example.com/blog`
 /// and always keep just the host.
@@ -198,6 +230,7 @@ pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> 
     let Some(domain) = domain else {
         // A base URL alone (local dev) still needs a domain for messages.
         if let Some(base) = &overrides.base_url {
+            check_transport(base)?;
             let domain = normalize_domain(base);
             return Ok(Target {
                 domain,
@@ -212,16 +245,28 @@ pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> 
     };
 
     let stored = config.site(&domain);
+    let stored_base = stored.and_then(|s| s.base_url.clone());
     let base_url = overrides
         .base_url
         .clone()
-        .or_else(|| stored.and_then(|s| s.base_url.clone()))
+        .or_else(|| stored_base.clone())
         .unwrap_or_else(|| format!("https://{domain}"));
-    let api_key = overrides
+    check_transport(&base_url)?;
+    let override_key = overrides
         .api_key
         .clone()
-        .filter(|k| !k.trim().is_empty())
-        .or_else(|| stored.map(|s| s.api_key.clone()));
+        .filter(|k| !k.trim().is_empty());
+    // A stored key only goes to the server it was stored for. A --base-url or
+    // a GEEKCLI_BASE_URL left over in the shell must bring its own key.
+    if let (None, Some(_), Some(base)) = (&override_key, stored, &overrides.base_url) {
+        let home = stored_base.unwrap_or_else(|| format!("https://{domain}"));
+        if normalize_domain(base) != normalize_domain(&home) {
+            return Err(Error::Config(format!(
+                "not sending the stored key for {domain} to {base}; pass --api-key (or GEEKCLI_API_KEY) for that server, or unset GEEKCLI_BASE_URL"
+            )));
+        }
+    }
+    let api_key = override_key.or_else(|| stored.map(|s| s.api_key.clone()));
 
     Ok(Target {
         domain,
@@ -230,9 +275,131 @@ pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> 
     })
 }
 
+/// Keys and login codes only travel over https, except to a local dev host
+/// (localhost, a loopback address, `*.localhost`, `*.local` or `*.test`).
+pub fn check_transport(base_url: &str) -> Result<()> {
+    let url = url::Url::parse(base_url)
+        .map_err(|e| Error::Config(format!("invalid base URL {base_url}: {e}")))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if url.host().is_some_and(|h| is_local_host(&h)) => Ok(()),
+        "http" => Err(Error::Config(format!(
+            "refusing to send an API key over plain http to {base_url}; use https (plain http is only allowed for localhost, *.local and *.test)"
+        ))),
+        other => Err(Error::Config(format!(
+            "unsupported scheme {other}: in {base_url}; use https://"
+        ))),
+    }
+}
+
+fn is_local_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Domain(name) => {
+            let name = name.to_ascii_lowercase();
+            name == "localhost"
+                || [".localhost", ".local", ".test"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_http_only_for_local_hosts() {
+        for ok in [
+            "https://www.example.com",
+            "http://localhost:8000",
+            "http://127.0.0.1:9000",
+            "http://[::1]:8000",
+            "http://www.cypress.local",
+            "http://site.test",
+            "http://api.localhost",
+        ] {
+            assert!(check_transport(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://www.example.com",
+            "http://10.0.0.5",
+            "ftp://www.example.com",
+            "http://local.example.com",
+        ] {
+            assert!(check_transport(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_stored_key_is_not_sent_to_another_base_url() {
+        let mut config = Config::default();
+        config.put_site(
+            "www.a.com",
+            SiteConfig {
+                api_key: "rg_live_a".into(),
+                ..Default::default()
+            },
+        );
+        let elsewhere = Overrides {
+            site: Some("www.a.com".into()),
+            base_url: Some("https://staging.example.net".into()),
+            ..Default::default()
+        };
+        assert!(resolve_target(&config, &elsewhere).is_err());
+
+        let with_key = Overrides {
+            api_key: Some("rg_live_staging".into()),
+            ..elsewhere
+        };
+        assert_eq!(
+            resolve_target(&config, &with_key).ok().and_then(|t| t.api_key),
+            Some("rg_live_staging".into())
+        );
+
+        let same = Overrides {
+            site: Some("www.a.com".into()),
+            base_url: Some("https://www.a.com/".into()),
+            ..Default::default()
+        };
+        assert!(resolve_target(&config, &same).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saves_privately_and_replaces_a_planted_symlink() -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir()?;
+        let dir = base.path().join("geekcli");
+        let path = dir.join("config.toml");
+        let decoy = base.path().join("decoy");
+        fs::write(&decoy, "untouched")?;
+        fs::create_dir(&dir)?;
+        std::os::unix::fs::symlink(&decoy, &path)?;
+
+        let mut config = Config::default();
+        config.put_site(
+            "www.a.com",
+            SiteConfig {
+                api_key: "rg_live_a".into(),
+                ..Default::default()
+            },
+        );
+        assert!(config.save_to(&path).is_ok());
+
+        assert_eq!(fs::read_to_string(&decoy)?, "untouched");
+        assert!(!fs::symlink_metadata(&path)?.file_type().is_symlink());
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+        assert_eq!(Config::load_from(&path).ok(), Some(config));
+
+        let fresh = base.path().join("new/geekcli/config.toml");
+        assert!(Config::default().save_to(&fresh).is_ok());
+        let dir_mode = fs::metadata(base.path().join("new/geekcli"))?.permissions().mode();
+        assert_eq!(dir_mode & 0o777, 0o700);
+        Ok(())
+    }
 
     #[test]
     fn moves_a_config_left_under_the_old_name() -> std::io::Result<()> {

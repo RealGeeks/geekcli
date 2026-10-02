@@ -149,6 +149,7 @@ fn login(env: &mut AuthEnv<'_>, args: &LoginArgs) -> Result<()> {
         .base_url
         .clone()
         .unwrap_or_else(|| format!("https://{domain}"));
+    config::check_transport(&base_url)?;
     let target = Target {
         domain: domain.clone(),
         base_url: base_url.clone(),
