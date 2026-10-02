@@ -143,7 +143,7 @@ fn sidebars_update_item_accepts_every_body_spelling() {
 fn help_shows_content_and_hides_the_other_spellings() {
     let server = Server::new();
     let dir = tempfile::tempdir().unwrap();
-    // the canonical --content-file shows; the third spelling stays hidden
+    // --content-file is the primary everywhere; the third spelling stays hidden
     for (args, hidden) in [
         (["posts", "update", "--help"], "--html-file"),
         (["area-pages", "update", "--help"], "--body-file"),
@@ -151,7 +151,12 @@ fn help_shows_content_and_hides_the_other_spellings() {
     ] {
         let out = cmd(&server, &dir).args(args).assert().success();
         let help = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
-        assert!(help.contains("--content-file"), "{args:?}: {help}");
+        // --content-file is the flag itself everywhere, not an alias of one
+        assert!(
+            help.lines()
+                .any(|l| l.trim_start().starts_with("--content-file <FILE>")),
+            "{args:?}: {help}"
+        );
         assert!(!help.contains(hidden), "{args:?}: {help}");
     }
 }

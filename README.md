@@ -24,7 +24,7 @@ beta. Breaking changes are called out in the [changelog](CHANGELOG.md).
 geekcli auth login --site www.example.com
 geekcli me
 geekcli posts create --title "Spring market update" --slug spring-market-update \
-    --body-file post.md --category market-updates --create-categories
+    --content-file post.md --category market-updates --create-categories
 geekcli posts publish spring-market-update
 ```
 
@@ -175,7 +175,7 @@ Highlights:
   site whose API is switched off (`api_disabled`); 4 not found, 5 validation,
   6 conflict, 7 rate limited, 8 network. Errors are JSON on stderr in JSON
   mode and include the API's per-field messages.
-- **Markdown in, HTML out**: `--body-file post.md` or `--markdown` converts
+- **Markdown in, HTML out**: `--content-file post.md` or `--markdown` converts
   before sending. `<!--read more-->` marks the summary break in posts. Content
   columns are Windows-1252: arrows, CJK text and emoji are rejected with a 422
   naming the character, so write those as entities (`&#8594;`).

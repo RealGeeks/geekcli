@@ -161,14 +161,19 @@ pub struct PostFields {
     /// URL slug, unique per site (required on create)
     #[arg(long)]
     pub slug: Option<String>,
-    /// Body as inline HTML (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "html")]
-    pub body: Option<String>,
-    /// Read the body from a file, or `-` for stdin; `.md` files are converted from Markdown
+    /// Post body as inline HTML (or Markdown with --markdown); `body` in the API
     #[arg(
-        long,
+        long = "content",
+        value_name = "HTML",
+        visible_alias = "body",
+        alias = "html"
+    )]
+    pub body: Option<String>,
+    /// Read the post body from a file, or `-` for stdin; `.md` files are converted from Markdown
+    #[arg(
+        long = "content-file",
         value_name = "FILE",
-        visible_alias = "content-file",
+        visible_alias = "body-file",
         alias = "html-file"
     )]
     pub body_file: Option<String>,
@@ -373,8 +378,12 @@ fn create(ctx: &Context, args: &CreateArgs) -> Result<()> {
     for required in ["title", "slug", "body"] {
         if !payload.contains(required) {
             return Err(Error::Usage(format!(
-                "--{} is required to create a post",
-                required.replace('_', "-")
+                "{} is required to create a post",
+                if required == "body" {
+                    "--content (or --content-file)".to_string()
+                } else {
+                    format!("--{}", required.replace('_', "-"))
+                }
             )));
         }
     }

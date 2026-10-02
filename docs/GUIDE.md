@@ -147,7 +147,8 @@ A slug that matches more than one page is an error; use the id or path.
 **Body content.** Every command that takes HTML (posts, pages, area-pages,
 agent-pages, home-page, blog, footers, sidebars `add-html`/`update-item`)
 accepts `--content` / `--content-file`; use those everywhere.
-`--body`/`--body-file` and `--html`/`--html-file` work too, as aliases. A file
+`--body`/`--body-file` (the API's field name for posts) and
+`--html`/`--html-file` (its name for sidebar items) work too, as aliases. A file
 may be `-` for stdin; add `--markdown` (or use a `.md` file) to convert
 Markdown to HTML.
 
@@ -178,7 +179,7 @@ geekcli posts unpublish 42
 geekcli posts delete 42
 ```
 
-Field flags: `--title --slug --body --body-file --markdown --status
+Field flags: `--title --slug --content --content-file --markdown --status
 --publish --category --create-categories --page-title --meta-description
 --meta-keywords --facebook-image --allow-comments --nofollow-comments
 --data`. `--data` takes a JSON object (inline, `@file`, or `-` for stdin)
@@ -546,7 +547,7 @@ geekcli sidebars add-html "Luxury Sidebar" --content-file card.md         # Mark
 geekcli sidebars add-links "Luxury Sidebar" --header "Featured Areas" --header-url /areas/ \
     --link "Riverside=/riverside/" --link "Fairview=/fairview/" --columns 2
 geekcli sidebars update-item 5 51 --link "Riverside=/riverside/" --link "Millbrook=/millbrook/"
-geekcli sidebars update-item 5 50 --html "<p>New card</p>"
+geekcli sidebars update-item 5 50 --content "<p>New card</p>"
 geekcli sidebars move-item 5 51 --to 0
 geekcli sidebars remove-item 5 50
 geekcli sidebars set-items 5 --data @items.json                         # replace all

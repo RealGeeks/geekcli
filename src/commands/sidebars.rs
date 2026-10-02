@@ -97,13 +97,18 @@ pub enum SidebarsSub {
 pub struct HtmlArgs {
     pub reference: String,
     /// Inline HTML (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "body")]
+    #[arg(
+        long = "content",
+        value_name = "HTML",
+        visible_alias = "html",
+        alias = "body"
+    )]
     pub html: Option<String>,
     /// Read the HTML from a file, or `-` for stdin; `.md` converts from Markdown
     #[arg(
-        long,
+        long = "content-file",
         value_name = "FILE",
-        visible_alias = "content-file",
+        visible_alias = "html-file",
         alias = "body-file"
     )]
     pub html_file: Option<String>,
@@ -138,12 +143,17 @@ pub struct LinksArgs {
 pub struct UpdateItemArgs {
     pub reference: String,
     pub item: u64,
-    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "body")]
+    #[arg(
+        long = "content",
+        value_name = "HTML",
+        visible_alias = "html",
+        alias = "body"
+    )]
     pub html: Option<String>,
     #[arg(
-        long,
+        long = "content-file",
         value_name = "FILE",
-        visible_alias = "content-file",
+        visible_alias = "html-file",
         alias = "body-file"
     )]
     pub html_file: Option<String>,

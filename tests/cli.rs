@@ -235,7 +235,9 @@ fn posts_create_requires_body() {
         .args(["posts", "create", "--title", "x", "--slug", "x"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("--body is required"));
+        .stderr(predicate::str::contains(
+            "--content (or --content-file) is required",
+        ));
 }
 
 #[test]
