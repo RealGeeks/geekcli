@@ -60,50 +60,65 @@ pub enum HomePageSub {
 pub struct UpdateArgs {
     /// HTML <title>
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub title: Option<String>,
     /// SEO description
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_description: Option<String>,
     /// SEO keywords
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEO)]
     pub meta_keywords: Option<String>,
     /// Content as inline HTML (or Markdown with --markdown)
     #[arg(long, value_name = "HTML", aliases = ["body", "html"])]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content: Option<String>,
     /// Read the content from a file, or `-` for stdin; `.md` files are converted from Markdown
     #[arg(long, value_name = "FILE", aliases = ["body-file", "html-file"])]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub content_file: Option<String>,
     /// Treat the content as Markdown and convert it to HTML
     #[arg(long)]
+    #[arg(help_heading = super::heading::CONTENT)]
     pub markdown: bool,
     /// The page's main hero heading (above the search form); unset, the site shows the BIG_SEARCH_TITLE setting ("Real Estate Search"). Use the page's target keyword
     #[arg(long, visible_alias = "page-heading", value_name = "TEXT")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_header: Option<String>,
     /// Text under the search heading
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_subheader: Option<String>,
     /// Heading above the property listings
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub listing_header: Option<String>,
     /// How many listings to show
     #[arg(long)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub number_of_properties: Option<u32>,
     /// Show listings above or below the content
     #[arg(long, value_enum)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub property_display_location: Option<DisplayLocation>,
     #[command(flatten)]
     pub attach: super::pages::AttachArgs,
     /// How listings display: carousel, grid, or `null` (anna-modern designs)
     #[arg(long, value_name = "TYPE")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub property_display_type: Option<String>,
     /// Show the Advanced Search / Sell Your Home tabs above the form (anna-modern)
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_form_tabs: Option<bool>,
     /// Image shown in the hero (logo-style, not the background): a file URL, or `null` to clear
     #[arg(long, value_name = "URL_OR_NULL")]
+    #[arg(help_heading = super::heading::SEARCH)]
     pub search_image: Option<String>,
     /// Featured Pages tile group to show (anna-modern): id, title, or `null`
     #[arg(long, value_name = "ID_TITLE_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub tile_group: Option<String>,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]

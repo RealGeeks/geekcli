@@ -92,6 +92,7 @@ pub struct CreateArgs {
     pub fields: TreeFields,
     /// Page template; see `geekcli templates list`
     #[arg(long)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub template: Option<String>,
     /// CRM agent id (see `geekcli agents`), or `null`
     #[arg(long, value_name = "ID_OR_NULL")]
@@ -104,6 +105,7 @@ pub struct UpdateArgs {
     #[command(flatten)]
     pub fields: TreeFields,
     #[arg(long)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub template: Option<String>,
     /// CRM agent id (see `geekcli agents`), or `null`
     #[arg(long, value_name = "ID_OR_NULL")]
