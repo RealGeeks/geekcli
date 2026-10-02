@@ -50,7 +50,7 @@ fn approve_redeems_code_with_verifier() {
             Matcher::Regex(r#""code_challenge":"[A-Za-z0-9_-]{43}""#.into()),
         ]))
         .with_status(201)
-        .with_body(r#"{"request_id":"req-1","authorize_url":"http://www.test.local/admin/api_keys/apikey/authorize-cli/req-1/","expires_in":600}"#)
+        .with_body(format!(r#"{{"request_id":"req-1","authorize_url":"{}/admin/api_keys/apikey/authorize-cli/req-1/","expires_in":600}}"#, server.url()))
         .create();
     let token = server
         .mock("POST", "/api/v3/auth/cli/token/")
@@ -91,7 +91,10 @@ fn deny_is_reported_and_nothing_is_redeemed() {
     server
         .mock("POST", "/api/v3/auth/cli/start/")
         .with_status(201)
-        .with_body(r#"{"request_id":"req-2","authorize_url":"http://x/","expires_in":600}"#)
+        .with_body(format!(
+            r#"{{"request_id":"req-2","authorize_url":"{}/a/","expires_in":600}}"#,
+            server.url()
+        ))
         .create();
     let token = server
         .mock("POST", "/api/v3/auth/cli/token/")
@@ -110,20 +113,66 @@ fn deny_is_reported_and_nothing_is_redeemed() {
 }
 
 #[test]
-fn state_mismatch_is_rejected() {
+fn a_wrong_state_or_a_stray_connection_does_not_end_the_login() {
     let mut server = Server::new();
     server
         .mock("POST", "/api/v3/auth/cli/start/")
         .with_status(201)
-        .with_body(r#"{"request_id":"req-3","authorize_url":"http://x/","expires_in":600}"#)
+        .with_body(format!(
+            r#"{{"request_id":"req-3","authorize_url":"{}/a/","expires_in":600}}"#,
+            server.url()
+        ))
+        .create();
+    let token = server
+        .mock("POST", "/api/v3/auth/cli/token/")
+        .match_body(Matcher::PartialJson(json!({ "code": "good-code" })))
+        .with_status(201)
+        .with_body(r#"{"api_key":"rg_live_minted"}"#)
         .create();
     let anon = anon_client(&server.url());
     let pending = browser::start(&anon, &request("state-good")).unwrap();
     let port = pending.port();
-    let browser = thread::spawn(move || browser_callback(port, "code=c&state=state-evil"));
-    let err = pending.wait_and_redeem(&anon).unwrap_err();
+    let browser = thread::spawn(move || {
+        // a local connection that never sends anything, then a stale tab
+        let idle = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        thread::sleep(Duration::from_millis(100));
+        drop(idle);
+        let body = reqwest::blocking::get(format!(
+            "http://127.0.0.1:{port}/callback?code=evil&state=state-evil"
+        ))
+        .unwrap()
+        .text()
+        .unwrap();
+        assert!(body.contains("could not be matched"));
+        browser_callback(port, "code=good-code&state=state-good");
+    });
+    let result = pending.wait_and_redeem(&anon).unwrap();
     browser.join().unwrap();
-    assert!(err.to_string().contains("state"), "{err}");
+    assert_eq!(result["api_key"], "rg_live_minted");
+    token.assert();
+}
+
+#[test]
+fn an_approval_url_off_the_site_is_refused() {
+    for url in [
+        "file:///Applications/Calculator.app",
+        "https://evil.example.net/approve",
+        "javascript:alert(1)",
+    ] {
+        let mut server = Server::new();
+        server
+            .mock("POST", "/api/v3/auth/cli/start/")
+            .with_status(201)
+            .with_body(format!(
+                r#"{{"request_id":"r","authorize_url":"{url}","expires_in":600}}"#
+            ))
+            .create();
+        let anon = anon_client(&server.url());
+        let Err(err) = browser::start(&anon, &request("state-1234")) else {
+            panic!("{url} was accepted");
+        };
+        assert!(err.to_string().contains("not on"), "{err}");
+    }
 }
 
 #[test]
@@ -153,7 +202,10 @@ fn login_posts_again_after_a_canonical_host_redirect() {
     let start = server
         .mock("POST", "/api/v3/auth/cli/canonical-start/")
         .with_status(201)
-        .with_body(r#"{"request_id":"req-redirect","authorize_url":"http://x/","expires_in":600}"#)
+        .with_body(format!(
+            r#"{{"request_id":"req-redirect","authorize_url":"{}/a/","expires_in":600}}"#,
+            server.url()
+        ))
         .create();
 
     let anon = anon_client(&server.url());

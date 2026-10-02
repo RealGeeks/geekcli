@@ -144,7 +144,10 @@ pub fn visit<T>(
             OsStr::new("--hide-scrollbars"),
             OsStr::new("--disable-extensions"),
         ])
-        .idle_browser_timeout(Duration::from_mins(2))
+        .idle_browser_timeout(Duration::from_secs(120))
+        // headless_chrome passes --ignore-certificate-errors unless told not
+        // to; a page an agent reads or asserts on must come from the real site
+        .ignore_certificate_errors(false)
         .build()
         .map_err(|e| Error::Other(format!("cannot configure the browser: {e}")))?;
     let browser = cdp(Browser::new(options), "cannot start the browser")?;

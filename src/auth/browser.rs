@@ -10,9 +10,9 @@
 //! 3. `POST /api/v3/auth/cli/token/` swaps the one-time code plus our
 //!    verifier for the key.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read as _, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
@@ -90,7 +90,8 @@ impl Pending {
     /// Block until the browser hits the loopback callback, then redeem the
     /// code. Returns the site's key response (`api_key`, `key`, `site`).
     pub fn wait_and_redeem(&self, anon: &Client) -> Result<Value> {
-        let code = wait_for_code(&self.listener, &self.state)?;
+        let deadline = Instant::now() + Duration::from_secs(self.expires_in);
+        let code = wait_for_code(&self.listener, &self.state, deadline)?;
         redeem(anon, &code, &self.pkce.verifier)
     }
 }
@@ -126,6 +127,7 @@ pub fn start(anon: &Client, request: &LoginRequest) -> Result<Pending> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::Other("login start response had no authorize_url".into()))?
         .to_string();
+    check_authorize_url(&anon.site_url(""), &authorize_url)?;
     let expires_in = response
         .body
         .get("expires_in")
@@ -178,21 +180,90 @@ pub fn login(anon: &Client, request: &LoginRequest, open_browser: bool) -> Resul
     pending.wait_and_redeem(anon)
 }
 
-/// Accept connections until one carries `/callback?code=…&state=…`.
-fn wait_for_code(listener: &TcpListener, expected_state: &str) -> Result<String> {
+/// The approval page is opened in the user's browser, so it must be a web
+/// page on the site being logged in to: https (http only when the site
+/// itself is plain http, as a local dev server is), same host or its
+/// `www.`/apex twin. Anything else (another host, `file:`, an app path) is
+/// refused rather than handed to the OS to open.
+fn check_authorize_url(site: &str, authorize_url: &str) -> Result<()> {
+    let refuse = || {
+        Error::Other(format!(
+            "the site returned an approval URL that is not on {site}: {authorize_url}"
+        ))
+    };
+    let site = Url::parse(site).map_err(|_| refuse())?;
+    let url = Url::parse(authorize_url).map_err(|_| refuse())?;
+    let scheme_ok = url.scheme() == "https" || (url.scheme() == "http" && site.scheme() == "http");
+    let (Some(a), Some(b)) = (site.host_str(), url.host_str()) else {
+        return Err(refuse());
+    };
+    let same_site =
+        a == b || a.strip_prefix("www.") == Some(b) || b.strip_prefix("www.") == Some(a);
+    if scheme_ok && same_site {
+        Ok(())
+    } else {
+        Err(refuse())
+    }
+}
+
+/// What one connection to the loopback port amounted to.
+enum Callback {
+    /// The approved callback: redeem this code.
+    Code(String),
+    /// The owner clicked Deny, or the site reported an error: stop.
+    Refused(String),
+    /// Anything else (favicon, prefetch, a stale tab, a stray local
+    /// connection): answer it and keep waiting.
+    Ignore,
+}
+
+/// Accept connections until one carries `/callback?code=…&state=…`, the owner
+/// denies, or the request expires. A connection that misbehaves only costs
+/// itself: it cannot end the login for the real callback.
+fn wait_for_code(
+    listener: &TcpListener,
+    expected_state: &str,
+    deadline: Instant,
+) -> Result<String> {
+    listener.set_nonblocking(true)?;
     loop {
-        let (stream, _) = listener.accept()?;
-        if let Some(code) = handle_connection(stream, expected_state)? {
-            return Ok(code);
+        if Instant::now() >= deadline {
+            return Err(Error::Other(
+                "the approval request expired before it was approved; run `geekcli auth login` again"
+                    .into(),
+            ));
+        }
+        let stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        match handle_connection(stream, expected_state) {
+            Ok(Callback::Code(code)) => return Ok(code),
+            Ok(Callback::Refused(message)) => {
+                return Err(Error::Other(format!("login refused: {message}")))
+            }
+            Ok(Callback::Ignore) | Err(_) => {}
         }
     }
 }
 
-fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Option<String>> {
+/// The longest request line read from the browser; a real callback is far
+/// shorter.
+const MAX_REQUEST_LINE: u64 = 8 * 1024;
+
+fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Callback> {
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut reader = BufReader::new(stream.try_clone()?.take(MAX_REQUEST_LINE * 4));
     let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    reader
+        .by_ref()
+        .take(MAX_REQUEST_LINE)
+        .read_line(&mut request_line)?;
     // Drain headers so the browser sees a clean close.
     let mut line = String::new();
     while reader.read_line(&mut line).is_ok() && line != "\r\n" && !line.is_empty() {
@@ -202,10 +273,12 @@ fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Opti
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     if !path.starts_with("/callback") {
         respond(&mut stream, 404, "Not found")?;
-        return Ok(None);
+        return Ok(Callback::Ignore);
     }
-    let parsed = Url::parse(&format!("http://127.0.0.1{path}"))
-        .map_err(|e| Error::Other(format!("bad callback URL: {e}")))?;
+    let Ok(parsed) = Url::parse(&format!("http://127.0.0.1{path}")) else {
+        respond(&mut stream, 400, "Bad request")?;
+        return Ok(Callback::Ignore);
+    };
     let get = |name: &str| {
         parsed
             .query_pairs()
@@ -214,20 +287,20 @@ fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Opti
     };
 
     match get("state") {
-        // No state at all: a stray hit (prefetch, reload of the bare path). Keep waiting.
+        // No state at all: a stray hit (prefetch, reload of the bare path).
         None => {
             respond(&mut stream, 404, "Not found")?;
-            return Ok(None);
+            return Ok(Callback::Ignore);
         }
+        // Not this login's state: an old tab or another tool. Say so, and keep
+        // waiting for the real callback.
         Some(state) if state != expected_state => {
             respond(
                 &mut stream,
                 400,
                 "This approval could not be matched to a command-line tool that is waiting. Please close this window and try again from the terminal.",
             )?;
-            return Err(Error::Other(
-                "callback state did not match; try again".into(),
-            ));
+            return Ok(Callback::Ignore);
         }
         Some(_) => {}
     }
@@ -242,7 +315,7 @@ fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Opti
         } else {
             format!("the site reported: {error}")
         };
-        return Err(Error::Other(format!("login refused: {message}")));
+        return Ok(Callback::Refused(message));
     }
     match get("code") {
         Some(code) if !code.is_empty() => {
@@ -251,11 +324,11 @@ fn handle_connection(mut stream: TcpStream, expected_state: &str) -> Result<Opti
                 200,
                 "You're all set. The command-line tool has been approved and can now manage content on your Real Geeks site. You can close this window and return to the terminal.",
             )?;
-            Ok(Some(code))
+            Ok(Callback::Code(code))
         }
         _ => {
             respond(&mut stream, 400, "Something went wrong with this approval. Please close this window and try again from the terminal.")?;
-            Err(Error::Other("callback had no code".into()))
+            Ok(Callback::Ignore)
         }
     }
 }
