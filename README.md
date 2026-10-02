@@ -150,7 +150,9 @@ Highlights:
 
 - **Output is JSON when piped**, a table on a terminal. `--json`, `-o jsonl`,
   `-o table` override; `-q` prints only ids, `-y` skips confirmation prompts
-  and `-v` logs requests to stderr.
+  and `-v` logs requests to stderr. Warnings the API returns with a
+  successful write print to stderr as `warning: …` in every mode;
+  `--fail-on-warnings` makes them exit 5 (after the write).
 - **Stable exit codes**: 1 other failure, including a temporary outage behind
   the site (`crm_unavailable`, `design_catalogue_unavailable`,
   `files_unavailable`) worth retrying; 2 usage, 3 auth, which also covers a

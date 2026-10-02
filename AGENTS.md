@@ -44,13 +44,17 @@ The rules that keep a live site safe:
    `error.fields` and fix those fields.
 3. `posts create` makes drafts unless you pass `--status published`.
 4. `update` only changes the flags you pass. Avoid `--replace`.
-5. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
+5. Read `warnings` on writes. A `warning:` line on stderr (and a
+   `warnings` array in the result) means the write was applied but not as
+   asked: HTML was stripped, or a search value matched nothing. Fix it and
+   write again. `--fail-on-warnings` turns them into exit 5.
+6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
    page, post or footer, so a bad result is one `revert` away.
-6. Check search criteria with `search check` before putting them on a page;
+7. Check search criteria with `search check` before putting them on a page;
    the site silently drops criteria it does not know.
-7. After a visible change, look at it: `geekcli snapshot <path> --full`
+8. After a visible change, look at it: `geekcli snapshot <path> --full`
    (and `--mobile`), or assert on the DOM with `geekcli inspect`.
-8. Anything the API cannot reach, report it to your human rather than
+9. Anything the API cannot reach, report it to your human rather than
    working around it.
 
 ## Working on this repository
@@ -67,7 +71,7 @@ src/
 ├── main.rs            # parse, run, print error, exit with the mapped code
 ├── cli.rs             # clap command tree and dispatch
 ├── config.rs          # ~/.config/geekcli/config.toml, site/key resolution
-├── client.rs          # blocking reqwest client: bearer auth, envelope, pagination, 429 retry
+├── client.rs          # blocking reqwest client: bearer auth, envelope, `warnings`, pagination, 429 retry
 ├── error.rs           # Error enum → exit codes
 ├── output.rs          # json / jsonl / table printing, error printing
 ├── html.rs            # body input from flag/file/stdin, Markdown → HTML
@@ -107,7 +111,8 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
 - `posts create` defaults `status` to `draft` on purpose; the API defaults to
   published. Keep that.
 - Human-only text goes to stderr via `Printer::note`; stdout is reserved for
-  the result document.
+  the result document. API `warnings` are the exception: `Client` prints them
+  with `eprintln!` in every mode, since agents run in JSON mode and need them.
 - New commands: add a module under `commands/`, a variant in `cli::Command`,
   a section in `docs/GUIDE.md`, and an integration test under `tests/`.
 - Field knowledge lives in three places, by depth: an `after_help` note on the

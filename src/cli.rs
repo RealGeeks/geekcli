@@ -10,7 +10,7 @@ use crate::commands::{
     Context,
 };
 use crate::config::{self, Config, Overrides};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::output::{Format, Printer};
 
 const ABOUT: &str = "The Real Geeks command line: manage a Real Geeks website's content.";
@@ -70,6 +70,15 @@ pub struct Global {
     /// Retries after a 429 rate limit
     #[arg(long, global = true, default_value_t = 3, value_name = "N")]
     pub max_retries: u32,
+    /// Exit 5 after printing the result if the API returned any warnings.
+    /// A write has already been applied by then
+    #[arg(
+        long,
+        global = true,
+        env = "GEEKCLI_FAIL_ON_WARNINGS",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub fail_on_warnings: bool,
 }
 
 impl Global {
@@ -179,7 +188,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 printer,
                 yes: cli.global.yes,
             };
-            match command {
+            let result = match command {
                 Command::Me => auth::status(&ctx),
                 Command::Posts(cmd) => posts::run(&ctx, cmd),
                 Command::Categories(cmd) => categories::run(&ctx, cmd),
@@ -202,6 +211,11 @@ pub fn run(cli: Cli) -> Result<()> {
                 Command::Inspect(args) => inspect::run(&ctx, &args),
                 Command::Api(args) => api::run(&ctx, &args),
                 Command::Guide(_) | Command::Completions { .. } | Command::Auth(_) => Ok(()),
+            };
+            result?;
+            match ctx.client.warning_count() {
+                n if n > 0 && cli.global.fail_on_warnings => Err(Error::Warnings(n)),
+                _ => Ok(()),
             }
         }
     }

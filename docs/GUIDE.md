@@ -80,6 +80,19 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
   fetched and `pagination` is omitted.
 - `-q` / `--quiet` prints only ids, one per line. Handy after `create`.
 - Human-only notes go to **stderr**, never stdout.
+- **API warnings.** A successful response can carry a `warnings` array: the
+  request worked, but not quite as asked. Each entry has a `code` and a
+  `message`; known codes are `unknown_value` / `ambiguous_value` (a search
+  value the site could not match, with `field`, `criterion`, `value` and
+  `suggestions`) and `sanitized` (HTML the sanitizer removed, listed in
+  `removed`). Every command prints each one to stderr as
+  `warning: <message>`, in every output mode including JSON, with
+  ` (did you mean: …?)` added for suggestions. The `warnings` array stays in
+  the JSON on stdout. **By the time a warning prints, the write has already
+  been applied**: read the warning, then fix the input and run the command
+  again, or undo it with `revisions` / `revert`. Pass `--fail-on-warnings` (or
+  set `GEEKCLI_FAIL_ON_WARNINGS=1`) to exit 5 after printing the result when
+  any warning came back.
 - Errors go to stderr as `{"error": {"code", "message", "status", "fields",
   "exit_code"}}` in JSON mode. `fields` maps request field names to messages
   when the API rejected input.
@@ -93,7 +106,7 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | 2    | usage error (bad flags, missing required field)         |
 | 3    | not logged in, invalid key, key lacks the scope, or the site's API is off (`api_disabled`: Real Geeks enables it per site) |
 | 4    | not found                                               |
-| 5    | validation error (see `fields`), bad request, or a body too large (413) |
+| 5    | validation error (see `fields`), bad request, or a body too large (413); with `--fail-on-warnings`, the API returned warnings (code `warnings`; the request succeeded and any write was applied) |
 | 6    | conflict: a guarded delete (the message names the flag), or two writes raced on the same slug or name (retry) |
 | 7    | rate limited after retries (`retry_after` seconds)      |
 | 8    | network error                                           |
