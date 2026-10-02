@@ -19,7 +19,7 @@
 
 * **deps:** update rustls to 0.23.45 for RUSTSEC-2026-0285 ([4439918](https://github.com/RealGeeks/geekcli/commit/44399187318a68ed48267b92976b9c0c41cfe740))
 
-## Changelog
+## Before 0.4.0
 
 Versions before 0.4.0 were released internally under the name `realgeeks`.
 `geekcli` moves an existing `~/.config/realgeeks/` to `~/.config/geekcli/` the

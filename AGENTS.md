@@ -118,6 +118,9 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
 - The CLI holds no Real Geeks password or client secret. Login goes through
   the site's own `auth/cli/start` + admin approval + `auth/cli/token`
   endpoints, and the login POSTs only follow redirects within the same site.
+- The API key never leaves the site's origin: no cross-origin redirects,
+  no full URLs off the site, https only (plain http just for local dev
+  hosts). Keep it that way in any new request path.
 - Search commands use the site's public `/api/v2/search/` and
   `/search_forms/api/advanced_search_form.json` through `Client::site_get`;
   everything else goes through `/api/v3/`. The site drops unknown criteria
@@ -139,10 +142,15 @@ cargo fmt
 ```
 
 All must pass clean before a commit. Do not silence lints with `#[allow]`;
-fix the code. CI runs them on every push and PR. `release.yml` uses
+fix the code. CI runs them on every push and PR, plus `cargo deny check`
+(advisories, licenses, sources; see `deny.toml`), a check on the MSRV
+(`rust-version` in Cargo.toml), a static musl build run on old distros, and
+zizmor over the workflows. Actions are pinned by commit SHA; Dependabot
+updates the pins. `release.yml` uses
 release-please: merging its release PR tags a version, builds the
-macOS/Linux/Windows archives onto the GitHub release, then runs `install.sh`
-and `install.ps1` against it. Keep those scripts in step with the archive
+macOS/Linux (static musl)/Windows archives with THIRD_PARTY_LICENSES.html
+(cargo-about, `about.toml`), attests their build provenance, uploads them to
+the GitHub release, then runs `install.sh` and `install.ps1` against it. Keep those scripts in step with the archive
 names in `release.yml`.
 
 ### Commits

@@ -1,0 +1,20 @@
+name: Feature request
+description: Something geekcli should do, such as an API field it has no flag for.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: A command or flag you would like, and the Content API endpoint or field it maps to if you know it.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: For example a `geekcli api …` call you use today.

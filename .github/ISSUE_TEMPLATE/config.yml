@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Help with a Real Geeks website or account
+    url: https://support.realgeeks.com/
+    about: Questions about your site, its content or your account go to Real Geeks support, not this repository.
+  - name: Content API reference
+    url: https://developers.realgeeks.com/content-api/
+    about: Endpoints, fields and error codes of the API geekcli talks to.
+  - name: Report a security vulnerability
+    url: https://github.com/RealGeeks/geekcli/security/advisories/new
+    about: Report privately; please do not open a public issue.
