@@ -339,17 +339,20 @@ fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
             .content_type
             .clone()
             .unwrap_or_else(|| guess_content_type(&file_name).to_string());
-        let part = Part::bytes(bytes)
-            .file_name(file_name.clone())
-            .mime_str(&content_type)
-            .map_err(|e| Error::Usage(format!("bad content type '{content_type}': {e}")))?;
-        let mut form = Form::new()
-            .part("file", part)
-            .text("path", folder.clone())
-            .text("name", file_name.clone());
-        if args.overwrite {
-            form = form.text("overwrite", "true");
-        }
+        let form = || -> Result<Form> {
+            let part = Part::bytes(bytes.clone())
+                .file_name(file_name.clone())
+                .mime_str(&content_type)
+                .map_err(|e| Error::Usage(format!("bad content type '{content_type}': {e}")))?;
+            let mut form = Form::new()
+                .part("file", part)
+                .text("path", folder.clone())
+                .text("name", file_name.clone());
+            if args.overwrite {
+                form = form.text("overwrite", "true");
+            }
+            Ok(form)
+        };
         let entry = ctx
             .client
             .post_multipart(&format!("{PATH}upload/"), form)?

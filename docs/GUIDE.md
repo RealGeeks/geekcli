@@ -109,7 +109,20 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | 8    | network error                                           |
 
 429 responses are retried automatically up to `--max-retries` (default 3),
-honouring `Retry-After`. The limit is 600 requests per hour per key.
+file uploads included, honouring `Retry-After` (seconds or an HTTP date;
+5s when absent, each wait capped at 30s). Every wait prints one line on
+stderr, with or without `-v`, so a long run never looks hung:
+
+```
+rate limited; retrying in 30s (attempt 2 of 3)
+```
+
+stdout is untouched. When retries run out the command exits 7. The limit is
+600 requests per hour per key. If a response carries `X-RateLimit-Remaining`
+and `X-RateLimit-Limit` and fewer than 10% of requests are left, a single
+`warning: rate limit nearly used: …` line goes to stderr (once per run); slow
+a batch down or pause until the window resets. `--max-retries 0` fails fast
+on the first 429.
 Errors that have an obvious next step carry a `hint` (in the JSON envelope and after the table message).
 
 API reference: [Conventions](https://developers.realgeeks.com/content-api/#conventions).

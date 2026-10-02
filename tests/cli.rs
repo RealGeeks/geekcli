@@ -469,15 +469,77 @@ fn rate_limit_is_retried() {
             r#"{"results":[{"name":"About Page","description":"","extra_content_areas":[]}]}"#,
         )
         .create();
-    let out = env
+    // the notice goes to stderr without -v; stdout stays the JSON result
+    let output = env
         .cmd()
         .args(["templates", "list"])
         .assert()
         .success()
+        .stderr("rate limited; retrying in 0s (attempt 1 of 3)\n")
         .get_output()
-        .stdout
         .clone();
-    assert_eq!(parse(&out)["results"][0]["name"], "About Page");
+    assert_eq!(parse(&output.stdout)["results"][0]["name"], "About Page");
+}
+
+#[test]
+fn retry_after_http_date_in_the_past_retries_at_once() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/content/templates/")
+        .with_status(429)
+        .with_header("retry-after", "Wed, 21 Oct 2015 07:28:00 GMT")
+        .with_body(r#"{"error":{"code":"rate_limited","message":"slow down"}}"#)
+        .expect(1)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/templates/")
+        .with_body(r#"{"results":[]}"#)
+        .create();
+    env.cmd()
+        .args(["templates", "list", "--max-retries", "2"])
+        .assert()
+        .success()
+        .stderr("rate limited; retrying in 0s (attempt 1 of 2)\n");
+}
+
+#[test]
+fn low_rate_limit_remaining_warns_once() {
+    let mut env = Env::new();
+    let list = r#"{"results":[{"name":"About Page","description":"","extra_content_areas":[]}]}"#;
+    env.server
+        .mock("GET", "/api/v3/content/templates/")
+        .with_header("x-ratelimit-limit", "600")
+        .with_header("x-ratelimit-remaining", "12")
+        .with_header("x-ratelimit-reset", "900")
+        .with_body(list)
+        .create();
+    let output = env
+        .cmd()
+        .args(["templates", "list"])
+        .assert()
+        .success()
+        .stderr(
+            "warning: rate limit nearly used: 12 of 600 requests left in this window (resets in 900s)\n",
+        )
+        .get_output()
+        .clone();
+    assert_eq!(parse(&output.stdout)["results"][0]["name"], "About Page");
+}
+
+#[test]
+fn rate_limit_headers_with_room_say_nothing() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/content/templates/")
+        .with_header("x-ratelimit-limit", "600")
+        .with_header("x-ratelimit-remaining", "60")
+        .with_body(r#"{"results":[]}"#)
+        .create();
+    env.cmd()
+        .args(["templates", "list"])
+        .assert()
+        .success()
+        .stderr("");
 }
 
 #[test]
