@@ -838,3 +838,106 @@ fn pages_list_no_longer_sends_include_content() {
         .success();
     list.assert();
 }
+
+#[test]
+fn a_redirect_to_another_origin_is_not_followed_with_the_key() {
+    let mut env = Env::new();
+    let mut elsewhere = Server::new();
+    // another origin that would bounce the request on to itself, where reqwest
+    // would otherwise put the Authorization header back
+    let step1 = elsewhere
+        .mock("GET", "/step1")
+        .with_status(302)
+        .with_header("location", "/step2")
+        .expect(0)
+        .create();
+    let step2 = elsewhere.mock("GET", "/step2").expect(0).create();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/7/")
+        .with_status(301)
+        .with_header("location", &format!("{}/step1", elsewhere.url()))
+        .create();
+
+    env.cmd()
+        .args(["posts", "get", "7"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("another origin"));
+    step1.assert();
+    step2.assert();
+}
+
+#[test]
+fn same_origin_redirects_are_still_followed() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/7")
+        .with_status(301)
+        .with_header("location", "/api/v3/blog/posts/7/")
+        .create();
+    let detail = env
+        .server
+        .mock("GET", "/api/v3/blog/posts/7/")
+        .match_header("authorization", format!("Bearer {KEY}").as_str())
+        .with_body(r#"{"id":7,"slug":"seven"}"#)
+        .create();
+
+    env.cmd()
+        .args(["api", "GET", "blog/posts/7"])
+        .assert()
+        .success();
+    detail.assert();
+}
+
+#[test]
+fn the_api_command_refuses_urls_on_other_origins() {
+    let env = Env::new();
+    let mut elsewhere = Server::new();
+    let leak = elsewhere.mock("GET", "/collect").expect(0).create();
+
+    env.cmd()
+        .args(["api", "GET", &format!("{}/collect", elsewhere.url())])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("refusing to send"));
+    leak.assert();
+}
+
+#[test]
+fn pagination_never_follows_next_to_another_origin() {
+    let mut env = Env::new();
+    let mut elsewhere = Server::new();
+    let leak = elsewhere.mock("GET", Matcher::Any).expect(0).create();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/")
+        .match_query(Matcher::Any)
+        .with_body(format!(
+            r#"{{"results":[{{"id":1}}],"pagination":{{"next":"{}/api/v3/blog/posts/?page=2"}}}}"#,
+            elsewhere.url()
+        ))
+        .create();
+
+    env.cmd()
+        .args(["posts", "list", "--all"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("refusing to send"));
+    leak.assert();
+}
+
+#[test]
+fn pagination_stops_when_next_repeats() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"results":[{"id":1}],"pagination":{"next":"/api/v3/blog/posts/?page=2"}}"#)
+        .expect_at_most(3)
+        .create();
+
+    env.cmd()
+        .args(["posts", "list", "--all"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("repeat"));
+}

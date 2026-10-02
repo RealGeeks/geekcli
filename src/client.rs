@@ -19,6 +19,12 @@ use crate::error::{ApiError, Error, Result};
 
 pub const USER_AGENT_VALUE: &str = concat!("geekcli/", env!("CARGO_PKG_VERSION"));
 const MAX_RETRY_WAIT: u64 = 30;
+const MAX_REDIRECTS: usize = 10;
+/// Larger responses are refused rather than buffered: no API response is
+/// anywhere near this, so hitting it means something is wrong.
+const MAX_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
+/// `get_all` stops after this many pages even if `next` keeps coming.
+const MAX_PAGES: usize = 10_000;
 
 pub type Query = Vec<(String, String)>;
 
@@ -61,11 +67,12 @@ impl Client {
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         let http = HttpClient::builder()
             .default_headers(headers.clone())
-            .timeout(Duration::from_mins(1))
+            .timeout(Duration::from_secs(60))
+            .redirect(same_origin_redirects())
             .build()?;
         let no_redirect_http = HttpClient::builder()
             .default_headers(headers)
-            .timeout(Duration::from_mins(1))
+            .timeout(Duration::from_secs(60))
             .redirect(Policy::none())
             .build()?;
         Ok(Self {
@@ -117,7 +124,7 @@ impl Client {
                 "no API key for this site. Run `geekcli auth login --site <domain>` or set GEEKCLI_API_KEY".into(),
             ));
         };
-        let url = self.url(path);
+        let url = self.url(path)?;
         if self.verbose {
             eprintln!("> POST {url} (multipart)");
         }
@@ -134,15 +141,25 @@ impl Client {
     }
 
     /// Resolve a path relative to `/api/v3/`. Absolute `/api/v3/...` paths
-    /// (as returned in pagination links) are accepted too.
-    pub fn url(&self, path: &str) -> String {
+    /// (as returned in pagination links) are accepted too. A full URL is only
+    /// accepted on the site's own origin: requests carry the API key, so a URL
+    /// from anywhere else (a pasted link, a crafted `next`) is refused.
+    pub fn url(&self, path: &str) -> Result<String> {
         if path.starts_with("http://") || path.starts_with("https://") {
-            return path.to_string();
+            let wanted = reqwest::Url::parse(&self.root).map(|u| u.origin());
+            let given = reqwest::Url::parse(path).map(|u| u.origin());
+            return match (wanted, given) {
+                (Ok(wanted), Ok(given)) if wanted == given => Ok(path.to_string()),
+                _ => Err(Error::Usage(format!(
+                    "refusing to send this site's API key to {path}: only URLs on {} are allowed",
+                    self.site
+                ))),
+            };
         }
         if let Some(rest) = path.strip_prefix("/api/v3/") {
-            return format!("{}{}", self.root, rest);
+            return Ok(format!("{}{}", self.root, rest));
         }
-        format!("{}{}", self.root, path.trim_start_matches('/'))
+        Ok(format!("{}{}", self.root, path.trim_start_matches('/')))
     }
 
     pub fn get(&self, path: &str, query: &Query) -> Result<ApiResponse> {
@@ -163,7 +180,7 @@ impl Client {
         body: &Value,
     ) -> Result<ApiResponse> {
         const MAX_REDIRECTS: usize = 5;
-        let mut url = self.url(path);
+        let mut url = self.url(path)?;
 
         for _ in 0..=MAX_REDIRECTS {
             if self.verbose {
@@ -234,9 +251,15 @@ impl Client {
             query.push(("page_size".into(), "100".into()));
         }
         let mut results = Vec::new();
-        let mut next: Option<String> = Some(self.url(path));
+        let mut next: Option<String> = Some(self.url(path)?);
+        let mut seen = std::collections::HashSet::new();
         let mut first = true;
         while let Some(url) = next.take() {
+            if !seen.insert(url.clone()) || seen.len() > MAX_PAGES {
+                return Err(Error::Other(format!(
+                    "stopped paging at {url}: the pagination links repeat or never end"
+                )));
+            }
             let response = if first {
                 first = false;
                 self.get(&url, &query)?
@@ -250,7 +273,8 @@ impl Client {
                 .body
                 .pointer("/pagination/next")
                 .and_then(Value::as_str)
-                .map(|n| self.url(n));
+                .map(|n| self.url(n))
+                .transpose()?;
         }
         Ok(results)
     }
@@ -264,7 +288,7 @@ impl Client {
         body: Option<&Value>,
         auth: bool,
     ) -> Result<ApiResponse> {
-        let url = self.url(path);
+        let url = self.url(path)?;
         if auth && self.api_key.is_none() {
             return Err(Error::NotLoggedIn(
                 "no API key for this site. Run `geekcli auth login --site <domain>` or set GEEKCLI_API_KEY"
@@ -328,6 +352,27 @@ impl Client {
     }
 }
 
+/// Follow redirects only while they stay on the origin of the original
+/// request. reqwest drops `Authorization` when a single hop changes host, but
+/// a later same-host hop on the new origin gets it back, so a site that
+/// redirects to another domain must not be followed at all.
+fn same_origin_redirects() -> Policy {
+    Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        let same_origin = attempt
+            .previous()
+            .first()
+            .is_none_or(|first| first.origin() == attempt.url().origin());
+        if same_origin {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
 /// Whether a login POST may follow a redirect from `from` to `to`. The body
 /// carries a one-time code and PKCE verifier, so it only goes to the same host
 /// or its `www.`/apex twin, and never from https down to http.
@@ -367,7 +412,13 @@ fn decode(response: Response) -> Result<ApiResponse> {
                 .map(|v| (k.as_str().to_ascii_lowercase(), v.to_string()))
         })
         .collect();
-    let text = response.text()?;
+    if status.is_redirection() {
+        return Err(Error::Other(format!(
+            "the site redirected to {}, another origin; geekcli does not follow it with your API key. Check that --site is the site's canonical domain",
+            location.as_deref().unwrap_or("an unknown location")
+        )));
+    }
+    let text = read_limited(response)?;
 
     if status.is_success() {
         let body = if text.trim().is_empty() {
@@ -384,6 +435,22 @@ fn decode(response: Response) -> Result<ApiResponse> {
     }
 
     Err(Error::api(parse_error(status.as_u16(), &text, retry)))
+}
+
+/// The body as text, refusing anything over `MAX_RESPONSE_BYTES`.
+fn read_limited(response: Response) -> Result<String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::Io(format!("reading the response: {e}")))?;
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(Error::Other(format!(
+            "the response is larger than {MAX_RESPONSE_BYTES} bytes; refusing to read it"
+        )));
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Turn an error response into `ApiError`, tolerating non-JSON bodies
@@ -539,14 +606,23 @@ mod tests {
         let Ok(client) = Client::new(&target, 0, false) else {
             return;
         };
+        let url = |p: &str| client.url(p).ok();
         assert_eq!(
-            client.url("blog/posts/"),
-            "https://x.com/api/v3/blog/posts/"
+            url("blog/posts/").as_deref(),
+            Some("https://x.com/api/v3/blog/posts/")
         );
         assert_eq!(
-            client.url("/api/v3/blog/posts/?page=2"),
-            "https://x.com/api/v3/blog/posts/?page=2"
+            url("/api/v3/blog/posts/?page=2").as_deref(),
+            Some("https://x.com/api/v3/blog/posts/?page=2")
         );
-        assert_eq!(client.url("https://y.com/z"), "https://y.com/z");
+        assert_eq!(
+            url("https://x.com/api/v3/blog/posts/?page=3").as_deref(),
+            Some("https://x.com/api/v3/blog/posts/?page=3")
+        );
+        // the key never goes to another origin, even a sibling or downgrade
+        assert_eq!(url("https://y.com/z"), None);
+        assert_eq!(url("https://x.com.evil.net/api/v3/"), None);
+        assert_eq!(url("http://x.com/api/v3/blog/posts/"), None);
+        assert_eq!(url("https://x.com:8443/api/v3/"), None);
     }
 }
