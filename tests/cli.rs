@@ -1109,3 +1109,162 @@ fn pages_update_by_id_sends_only_the_patch() {
     detail.assert();
     patch.assert();
 }
+
+#[test]
+fn area_pages_create_without_search_is_a_usage_error() {
+    let mut env = Env::new();
+    // Any request at all would hit one of these; neither may be called.
+    let calls: Vec<_> = ["GET", "POST"]
+        .into_iter()
+        .map(|method| {
+            env.server
+                .mock(method, Matcher::Any)
+                .with_status(500)
+                .expect(0)
+                .create()
+        })
+        .collect();
+    let out = env
+        .cmd()
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "downtown",
+            "--anchor-text",
+            "Downtown",
+            "--area-name",
+            "Downtown",
+        ])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    let err = parse(&out);
+    assert_eq!(err["error"]["code"], "usage");
+    let message = err["error"]["message"].as_str().unwrap();
+    assert!(message.contains("--no-search"), "{message}");
+    assert!(message.contains("--area-name is only a label"), "{message}");
+
+    // `--search null` is no search either.
+    env.cmd()
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "downtown",
+            "--anchor-text",
+            "Downtown",
+            "--area-name",
+            "Downtown",
+            "--search",
+            "null",
+        ])
+        .assert()
+        .code(2);
+    for mock in calls {
+        mock.assert();
+    }
+}
+
+#[test]
+fn area_pages_create_with_no_search_sends_the_request() {
+    let mut env = Env::new();
+    let post = env
+        .server
+        .mock("POST", "/api/v3/content/area-pages/")
+        .match_body(Matcher::Json(json!({
+            "slug": "downtown",
+            "anchor_text": "Downtown",
+            "area_name": "Downtown"
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":7,"path":"/downtown/","url":"https://www.test.local/downtown/"}"#)
+        .create();
+    env.cmd()
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "downtown",
+            "--anchor-text",
+            "Downtown",
+            "--area-name",
+            "Downtown",
+            "--no-search",
+        ])
+        .assert()
+        .success();
+    post.assert();
+}
+
+#[test]
+fn area_pages_create_sends_search_criteria() {
+    let mut env = Env::new();
+    let post = env
+        .server
+        .mock("POST", "/api/v3/content/area-pages/")
+        .match_body(Matcher::Json(json!({
+            "slug": "downtown",
+            "anchor_text": "Downtown",
+            "area_name": "Downtown",
+            "search": { "subdivision": ["Downtown"] }
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":7,"path":"/downtown/","url":"https://www.test.local/downtown/"}"#)
+        .create();
+    env.cmd()
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "downtown",
+            "--anchor-text",
+            "Downtown",
+            "--area-name",
+            "Downtown",
+            "--search-criteria",
+            "subdivision=Downtown",
+        ])
+        .assert()
+        .success();
+    post.assert();
+    // --no-search alongside a search is contradictory.
+    env.cmd()
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "downtown",
+            "--anchor-text",
+            "Downtown",
+            "--area-name",
+            "Downtown",
+            "--search-criteria",
+            "subdivision=Downtown",
+            "--no-search",
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn area_pages_help_explains_area_name_and_publishing() {
+    let env = Env::new();
+    for sub in ["create", "update"] {
+        env.cmd()
+            .args(["area-pages", sub, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--area-name is display text only"))
+            .stdout(predicate::str::contains("subdivision"))
+            .stdout(predicate::str::contains("search check"));
+    }
+    env.cmd()
+        .args(["area-pages", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("public as soon as it is created"))
+        .stdout(predicate::str::contains("--no-search"));
+}

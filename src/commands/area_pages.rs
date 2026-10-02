@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::pages::{self, TreeFields, TreeListArgs, AREA_PATH};
 use super::{id_of, list_and_print, parse_bool, print_written, push, Context};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::output::{col, Column};
 
 pub const LIST_COLUMNS: &[Column] = &[
@@ -47,13 +47,24 @@ pub enum AreaPagesSub {
     List(ListArgs),
     /// Show one area page by id, path or slug
     Get { reference: String },
-    /// Create an area page
     #[command(after_help = "Notes:
-  - --search-criteria takes the keys from `search fields`, plus polygon=lat,lng;… for a custom map area (`geekcli guide polygon`).")]
-    Create(FieldArgs),
-    /// Change fields on an area page
+  - --area-name is display text only (the listing header, titles). It does not decide which listings the page shows.
+  - --search-criteria (or --search with a saved search id) is what scopes the listings. Common keys are city, county, subdivision and zip, but names and values are site specific: check them with `search fields` and `search choices <field>`.
+  - Run `search check --count --strict` with the same criteria first to confirm the keys and values are understood and listings come back.
+  - polygon=lat,lng;… in --search-criteria scopes a custom map area (`geekcli guide polygon`).
+  - Create fails without --search-criteria or --search; pass --no-search to create a page whose listings are not scoped to the area.
+  - There is no draft state: the page is public as soon as it is created.
+  - --parent takes an id, a /path/ or a slug.
+  - Snapshot the page afterwards.")]
+    /// Create an area page (public immediately)
+    Create(CreateArgs),
     #[command(after_help = "Notes:
-  - --search-criteria takes the keys from `search fields`, plus polygon=lat,lng;… for a custom map area (`geekcli guide polygon`).")]
+  - Only the flags you pass change.
+  - --area-name is display text only (the listing header, titles); changing it does not change which listings the page shows.
+  - --search-criteria replaces the page's saved search, which is what scopes the listings (common keys: city, county, subdivision, zip; check them with `search fields`, then `search check` and `search run`).
+  - polygon=lat,lng;… in --search-criteria scopes a custom map area (`geekcli guide polygon`).
+  - Changes are live immediately; area pages have no draft state.")]
+    /// Change fields on an area page (changes are live immediately)
     Update(UpdateArgs),
     /// Delete an area page
     Delete {
@@ -90,12 +101,26 @@ pub struct ListArgs {
 pub struct FieldArgs {
     #[command(flatten)]
     pub fields: TreeFields,
-    /// Name of the area (required on create)
+    /// Display name of the area for headers and titles (required on create); a label only, it does not filter listings
     #[arg(long)]
     pub area_name: Option<String>,
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
     pub featured: Option<bool>,
 }
+
+#[derive(Debug, Args)]
+pub struct CreateArgs {
+    #[command(flatten)]
+    pub fields: FieldArgs,
+    /// Create the page without a search, so its listings are not scoped to the area
+    #[arg(long, conflicts_with_all = ["search", "search_criteria"])]
+    pub no_search: bool,
+}
+
+const NO_SEARCH: &str = "an area page needs a search to scope its listings: --area-name is only a label. \
+Pass --search-criteria KEY=VALUE (for example city=… or subdivision=…; check keys with `search fields` and \
+results with `search run`) or --search <saved search id>, or --no-search to create it without one. \
+The page is public as soon as it is created";
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
@@ -123,12 +148,28 @@ pub fn run(ctx: &Context, cmd: AreaPagesCommand) -> Result<()> {
             &pages::resolve(ctx, AREA_PATH, &reference, "area page")?,
             DETAIL_COLUMNS,
         ),
-        AreaPagesSub::Create(args) => {
+        AreaPagesSub::Create(CreateArgs {
+            fields: args,
+            no_search,
+        }) => {
+            let attach = &args.fields.attach;
+            // Fail before any request when nothing could supply a search;
+            // --data may carry one, so that case is checked on the payload.
+            if !no_search
+                && attach.search.is_none()
+                && attach.search_criteria.is_empty()
+                && args.fields.data.is_none()
+            {
+                return Err(Error::Usage(NO_SEARCH.into()));
+            }
             let mut payload = args.fields.payload(ctx, AREA_PATH)?;
             payload
                 .set("area_name", args.area_name.as_deref())
                 .set("featured", args.featured);
             pages::require(&payload, &["slug", "anchor_text", "area_name"], "area page")?;
+            if !no_search && payload.0.get("search").is_none_or(Value::is_null) {
+                return Err(Error::Usage(NO_SEARCH.into()));
+            }
             let created = ctx.client.post(AREA_PATH, &payload.into_value())?.body;
             print_written(ctx, &created, DETAIL_COLUMNS, "Created")
         }
