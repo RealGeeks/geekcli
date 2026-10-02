@@ -1026,6 +1026,7 @@ fn nav_add_allow_duplicate_posts() {
     let post = env
         .server
         .mock("POST", "/api/v3/content/navigation-bars/2/links/")
+        .match_query(Matcher::UrlEncoded("allow_duplicate".into(), "true".into()))
         .match_body(Matcher::PartialJson(json!({ "url": "/luxury/" })))
         .with_body(bottom_bar(&["/luxury/", "/luxury/"]).to_string())
         .create();
