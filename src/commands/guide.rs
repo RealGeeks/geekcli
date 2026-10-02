@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(find(&all, "Content"), vec![1]);
         assert_eq!(find(&all, "html"), vec![1]);
         assert_eq!(find(&all, "errors"), vec![2]);
-        assert!(find(&all, "nope").is_empty());
+        assert_eq!(find(&all, "nope"), Vec::<usize>::new());
     }
 
     #[test]
