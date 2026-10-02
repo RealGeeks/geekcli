@@ -53,7 +53,19 @@ fn fields_and_choices_need_no_key() {
         .iter()
         .map(|r| r["attr"].as_str().unwrap())
         .collect();
-    assert_eq!(attrs, ["city", "type", "type", "list_price_min"]);
+    assert_eq!(attrs, ["city", "type", "type", "list_price_min", "polygon"]);
+    let polygon = &doc["results"][4];
+    assert_eq!(polygon["section"], "builtin");
+    assert_eq!(polygon["widget"], "polygon");
+    assert_eq!(polygon["choices_count"], 0);
+    let mut keys: Vec<&String> = polygon.as_object().unwrap().keys().collect();
+    let mut form_keys: Vec<&String> = doc["results"][0].as_object().unwrap().keys().collect();
+    keys.sort();
+    form_keys.sort();
+    assert_eq!(
+        keys, form_keys,
+        "polygon row has the same shape as form rows"
+    );
 
     let out = cmd(&server, &dir)
         .args(["search", "choices", "type"])
@@ -523,4 +535,151 @@ fn check_strict_fails_when_values_cannot_be_checked() {
         .code(1);
     let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
     assert_eq!(err["error"]["code"], "value_check_unavailable");
+}
+
+const POLYGON: &str = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902;38.75421,-77.23718;38.78512,-77.24901";
+
+#[test]
+fn malformed_polygon_is_a_usage_error_before_any_request() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let any = server
+        .mock("GET", Matcher::Any)
+        .match_query(Matcher::Any)
+        .expect(0)
+        .create();
+    for bad in [
+        "polygon=38.7,-77.2;38.8,-77.1",
+        "polygon=38.7,-77.2;oops;38.6,-77.0;38.7,-77.2",
+        "polygon=-120.8,38.1;38.8,-77.1;38.6,-77.0;-120.8,38.1",
+    ] {
+        cmd(&server, &dir)
+            .args(["search", "check", bad])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("polygon"));
+        cmd(&server, &dir)
+            .args(["search", "run", bad, "type=res"])
+            .assert()
+            .code(2);
+    }
+    cmd(&server, &dir)
+        .env("GEEKCLI_API_KEY", "rg_live_k")
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "zone",
+            "--area-name",
+            "Zone",
+            "--anchor-text",
+            "Zone",
+            "--search-criteria",
+            "polygon=1,2;3,4",
+        ])
+        .assert()
+        .code(2);
+    any.assert();
+}
+
+#[test]
+fn valid_polygon_passes_through_unchanged() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let meta = server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("polygon".into(), POLYGON.into()),
+            Matcher::UrlEncoded("type".into(), "res".into()),
+        ]))
+        .with_body(format!(
+            r#"{{"description":"in a custom area","criteria":{{"polygon":["{POLYGON}"],"type":["res"]}}}}"#
+        ))
+        .expect(2)
+        .create();
+    // `search check` reads the form to check type=res; polygon itself has no
+    // choice list, so the autocomplete index is never fetched
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .expect(0)
+        .create();
+    let search = server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("polygon".into(), POLYGON.into()),
+            Matcher::UrlEncoded("type".into(), "res".into()),
+        ]))
+        .with_header("x-total-count", "12")
+        .with_body("[]")
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "check", &format!("polygon={POLYGON}"), "type=res"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning").not());
+    let out = cmd(&server, &dir)
+        .args(["search", "run", &format!("polygon={POLYGON}"), "type=res"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["total"], 12);
+    meta.assert();
+    search.assert();
+    index.assert();
+
+    let create = server
+        .mock("POST", "/api/v3/content/area-pages/")
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "slug": "my-zone",
+            "search": { "polygon": [POLYGON], "type": ["res"] }
+        })))
+        .with_body(r#"{"id":31,"path":"/my-zone/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .env("GEEKCLI_API_KEY", "rg_live_k")
+        .args([
+            "area-pages",
+            "create",
+            "--slug",
+            "my-zone",
+            "--area-name",
+            "My Zone",
+            "--anchor-text",
+            "My Zone",
+            "--search-criteria",
+            &format!("polygon={POLYGON}"),
+            "--search-criteria",
+            "type=res",
+        ])
+        .assert()
+        .success();
+    create.assert();
+}
+
+#[test]
+fn unclosed_polygon_warns_but_is_sent() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let open = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902";
+    let meta = server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::UrlEncoded("polygon".into(), open.into()))
+        .with_body(format!(
+            r#"{{"description":"d","criteria":{{"polygon":["{open}"]}}}}"#
+        ))
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "check", &format!("polygon={open}")])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: polygon: the ring is not closed",
+        ));
+    meta.assert();
 }

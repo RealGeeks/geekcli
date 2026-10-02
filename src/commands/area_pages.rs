@@ -47,8 +47,12 @@ pub enum AreaPagesSub {
     /// Show one area page by id, path or slug
     Get { reference: String },
     /// Create an area page
+    #[command(after_help = "Notes:
+  - --search-criteria takes the keys from `search fields`, plus polygon=lat,lng;… for a custom map area (`geekcli guide polygon`).")]
     Create(FieldArgs),
     /// Change fields on an area page
+    #[command(after_help = "Notes:
+  - --search-criteria takes the keys from `search fields`, plus polygon=lat,lng;… for a custom map area (`geekcli guide polygon`).")]
     Update(UpdateArgs),
     /// Delete an area page
     Delete {
