@@ -328,10 +328,13 @@ geekcli search fields                 # the fields this site accepts, with defau
 geekcli search choices city           # valid values for a field
 geekcli search choices city -s beach  # filter the values
 geekcli search choices subdivision --all -s oak   # every value the site knows, all cities
+geekcli search choices city --all --fuzzy mclean     # the 10 closest values, ranked
 
 # What the site understands; ignored keys are listed and exit code 5 is returned
 geekcli search check list_price_min=1000000 type=res type=con city="Key Biscayne"
 geekcli search check "/search/results/?list_price_min=1000000&q=Buckhead"   # paste a link
+geekcli search check city=McLean --count       # also check values and count the matches
+geekcli search check city=McLean --strict      # exit 5 on a value warning
 
 # Run it: matches, total count and the site's own description of the search
 geekcli search run list_price_min=1000000 city=Miami --sort highest --per-page 5
@@ -347,6 +350,28 @@ Criteria are `key=value` items; repeat a key for several values
 accepted as one item. `--save` stores the search on the site and returns
 its short id, which is what `/search/results/<id>/`, the map search and a
 page's `search_id` refer to.
+
+`search check` also compares each value with the field's choices, for
+fields that have a choice list (city, county, subdivision, zip, type …;
+price, beds and other numeric fields are skipped). Values are case
+sensitive on the site: `city=McLean` is understood but matches nothing when
+the site stores `Mclean`. The result carries:
+
+- `values_checked`: the fields whose values were compared.
+- `value_warnings`: one entry per bad value, `{field, value, kind,
+  suggestions, message}`. `kind` is `case_mismatch` (the suggestion is the
+  site's spelling) or `unknown_value` (up to 3 closest values by edit
+  distance).
+- `count` (with `--count`): how many listings the search matches. 0 is a
+  warning.
+- `warnings`: every warning as text, also printed to stderr.
+
+Warnings exit 0; `--strict` turns them into exit 5 (`value_mismatch`, or
+`no_matches` for a zero count) with the messages in `error.fields`. The
+form's own list is tried first and the site's autocomplete index (every
+county) only when the form does not settle it, so a value valid in another
+county is not flagged. A clean check without `--count` still does not prove
+the page will show listings; use `--count` or `search run`.
 
 Every content page, area page and the home page can show a saved search.
 Inspect it with `geekcli pages search /buying/` or `geekcli area-pages
@@ -366,9 +391,10 @@ The site validates criteria and rejects unknown fields with exit code 5
 naming them, so a page can no longer end up with a search that matches
 everything. Identical criteria reuse the same saved search.
 
-Values are site specific. Before writing a search link, confirm the field
-exists with `search fields`, the value with `search choices`, and the
-result with `search run`.
+Values are site specific. Before writing a search link, run
+`search check --count --strict` on it: that confirms the fields, the values
+and that it matches listings. `search choices <field> --all --fuzzy <text>`
+finds the right spelling of a value.
 
 API reference: [Searches](https://developers.realgeeks.com/content-api/searches/).
 
@@ -909,7 +935,8 @@ API reference: [the full Content API](https://developers.realgeeks.com/content-a
 
 1. `geekcli me --json` to confirm the site and scopes before writing.
 2. `geekcli search fields` before writing any search link or page
-   search; verify each with `search check`, count with `search run`.
+   search; verify each with `search check --count --strict` (keys, values
+   and a non-zero match count).
 3. Create posts as drafts; publish with `geekcli posts publish` once
    reviewed. A post created with `--status published` can read
    `scheduled` for the first second; it is published.
