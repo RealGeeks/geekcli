@@ -50,13 +50,15 @@ pub enum PostsSub {
         reference: String,
     },
     #[command(after_help = "Notes:
-  - The body is sanitized: script, style, button, form and svg are dropped, iframes only for YouTube/Vimeo, inline style keeps a short list of properties (text-align, color, background-color, font-*, margin*, padding*, border*, width, height, display, float, line-height).
+  - The body is sanitized: script, style, button, form and svg are dropped, iframes only for YouTube/Vimeo, inline style keeps only text-align, color, background-color, font-weight, font-style, font-size, text-decoration, width, height, max-width, margin*, padding*, float, display, border*, border-collapse, list-style-type, vertical-align and line-height.
   - See `geekcli guide html`.
   - Content columns are Windows-1252: arrows, CJK text and emoji are rejected with a 422 naming them; write such a character as a numeric entity (&#8594;) or use &raquo;.
   - Contact links: <a class=\"popup\" href=\"/member/contact/\"> opens the contact form as an overlay on designs that support it and works as a plain link elsewhere.
   - Put <!--read more--> where the summary ends.
   - Markdown (--markdown or a .md file) converts before sending.
-  - Creating with --status published can read `scheduled` for a second; it is published.")]
+  - Creating with --status published can read `scheduled` for a second; it is published.
+  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     /// Create a post (saved as a draft unless --status published)
     Create(CreateArgs),
     #[command(after_help = "Notes:
@@ -72,6 +74,10 @@ pub enum PostsSub {
         reference: String,
     },
     /// Publish a post now, or at a given time
+    #[command(after_help = "Notes:
+  - --at in the future makes the post `scheduled` until then.
+  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     Publish {
         /// Post id or slug
         reference: String,
@@ -83,6 +89,9 @@ pub enum PostsSub {
         keep_date: bool,
     },
     /// Take a post down: set it back to a draft
+    #[command(after_help = "Notes:
+  - Drafts and scheduled posts are hidden from the blog index, feed and sitemap; that is all post status promises. Do not rely on it to keep content confidential.
+  - `state` (draft, scheduled, published) reflects visibility; `status` alone does not, since a published post with a future publish date is scheduled.")]
     Unpublish {
         /// Post id or slug
         reference: String,
