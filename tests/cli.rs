@@ -700,7 +700,7 @@ fn blog_home_page_get_and_update() {
     env.cmd().args(["blog", "update"]).assert().code(2);
 }
 
-const REVISION: &str = r#"{"id":512,"at":"2026-09-30T14:00:00+00:00","by":{"name":"Jordan Avery","api_key":"cli","locutus_id":7},"action":"changed","message":"","changed_fields":["body","status"],"revertible":true}"#;
+const REVISION: &str = r#"{"id":512,"at":"2026-09-30T14:00:00+00:00","by":{"name":"Jordan Avery","api_key":"cli"},"action":"changed","message":"","changed_fields":["body","status"],"revertible":true}"#;
 
 #[test]
 fn posts_revisions_lists_and_limits() {
@@ -760,7 +760,7 @@ fn area_pages_revert_posts_to_the_revision() {
     let mut env = Env::new();
     env.server
         .mock("GET", "/api/v3/content/area-pages/23/")
-        .with_body(r#"{"id":23,"path":"/jupiter/"}"#)
+        .with_body(r#"{"id":23,"path":"/riverside/"}"#)
         .create();
     let revert = env
         .server
@@ -768,7 +768,7 @@ fn area_pages_revert_posts_to_the_revision() {
             "POST",
             "/api/v3/content/area-pages/23/revisions/402/revert/",
         )
-        .with_body(r#"{"id":23,"path":"/jupiter/","area_name":"Jupiter"}"#)
+        .with_body(r#"{"id":23,"path":"/riverside/","area_name":"Riverside"}"#)
         .create();
 
     let out = env
@@ -779,7 +779,7 @@ fn area_pages_revert_posts_to_the_revision() {
         .get_output()
         .stdout
         .clone();
-    assert_eq!(parse(&out)["area_name"], "Jupiter");
+    assert_eq!(parse(&out)["area_name"], "Riverside");
     revert.assert();
 }
 

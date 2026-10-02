@@ -193,9 +193,9 @@ fn nav_unknown_bar_exits_4() {
         .stderr(predicate::str::contains("top_primary"));
 }
 
-const SIDEBAR: &str = r#"{"id":5,"name":"Area Sidebar","special":false,"used_by":["jupiter"],"items":[
+const SIDEBAR: &str = r#"{"id":5,"name":"Area Sidebar","special":false,"used_by":["riverside"],"items":[
 {"id":50,"order":0,"type":"html","html":"<h2>Hello</h2>"},
-{"id":51,"order":1,"type":"links","header":{"text":"Areas","url":null},"links":[{"url":"/jupiter/","anchor":"Jupiter"}],"columns":1}]}"#;
+{"id":51,"order":1,"type":"links","header":{"text":"Areas","url":null},"links":[{"url":"/riverside/","anchor":"Riverside"}],"columns":1}]}"#;
 
 #[test]
 fn sidebars_get_by_name_and_add_links_item() {
@@ -216,7 +216,7 @@ fn sidebars_get_by_name_and_add_links_item() {
         .match_body(Matcher::Json(json!({
             "type": "links", "columns": 2,
             "header": {"text": "Featured", "url": "/areas/"},
-            "links": [{"anchor": "Jupiter", "url": "/jupiter/"}, {"anchor": "Coming soon"}]
+            "links": [{"anchor": "Riverside", "url": "/riverside/"}, {"anchor": "Coming soon"}]
         })))
         .with_status(201)
         .with_body(SIDEBAR)
@@ -229,7 +229,7 @@ fn sidebars_get_by_name_and_add_links_item() {
         .get_output()
         .stdout
         .clone();
-    assert_eq!(parse(&out)["used_by"][0], "jupiter");
+    assert_eq!(parse(&out)["used_by"][0], "riverside");
 
     cmd(&server, &dir)
         .args([
@@ -241,7 +241,7 @@ fn sidebars_get_by_name_and_add_links_item() {
             "--header-url",
             "/areas/",
             "--link",
-            "Jupiter=/jupiter/",
+            "Riverside=/riverside/",
             "--link",
             "Coming soon",
             "--columns",
@@ -296,7 +296,7 @@ fn pages_update_attaches_sidebar_by_name_and_search_by_criteria() {
     let dir = tempfile::tempdir().unwrap();
     server
         .mock("GET", "/api/v3/content/area-pages/23/")
-        .with_body(r#"{"id":23,"path":"/ballenisles/"}"#)
+        .with_body(r#"{"id":23,"path":"/lakeside/"}"#)
         .create();
     server
         .mock("GET", "/api/v3/content/sidebars/")
@@ -311,9 +311,9 @@ fn pages_update_attaches_sidebar_by_name_and_search_by_criteria() {
         .mock("PATCH", "/api/v3/content/area-pages/23/")
         .match_body(Matcher::Json(json!({
             "sidebar": 1,
-            "search": { "subdivision": ["Ballenisles"], "type": ["res", "con"] }
+            "search": { "subdivision": ["Lakeside"], "type": ["res", "con"] }
         })))
-        .with_body(r#"{"id":23,"path":"/ballenisles/","url":"https://x/ballenisles/","sidebar":{"id":1,"name":"Default Sidebar"},"search":{"id":9,"short_id":"9","description":"d","criteria":{}}}"#)
+        .with_body(r#"{"id":23,"path":"/lakeside/","url":"https://x/lakeside/","sidebar":{"id":1,"name":"Default Sidebar"},"search":{"id":9,"short_id":"9","description":"d","criteria":{}}}"#)
         .create();
     cmd(&server, &dir)
         .args([
@@ -323,7 +323,7 @@ fn pages_update_attaches_sidebar_by_name_and_search_by_criteria() {
             "--sidebar",
             "Default Sidebar",
             "--search-criteria",
-            "subdivision=Ballenisles",
+            "subdivision=Lakeside",
             "--search-criteria",
             "type=res",
             "--search-criteria",
@@ -400,7 +400,7 @@ fn sidebars_delete_in_use_exits_6_then_force() {
     server
         .mock("DELETE", "/api/v3/content/sidebars/5/")
         .with_status(409)
-        .with_body(r#"{"error":{"code":"conflict","message":"Sidebar is used by 1 page(s).","fields":{"used_by":["jupiter"]}}}"#)
+        .with_body(r#"{"error":{"code":"conflict","message":"Sidebar is used by 1 page(s).","fields":{"used_by":["riverside"]}}}"#)
         .create();
     server
         .mock("DELETE", "/api/v3/content/sidebars/5/")
@@ -578,7 +578,7 @@ fn footers_update_by_name_and_page_attach() {
         .match_body(Matcher::Json(json!({
             "footer": 1,
             "search_form_type": "typeahead",
-            "search_field_defaults": { "city": ["Jupiter"] }
+            "search_field_defaults": { "city": ["Riverside"] }
         })))
         .with_body(r#"{"id":7,"path":"/buying/","url":"https://x/buying/"}"#)
         .create();
@@ -592,7 +592,7 @@ fn footers_update_by_name_and_page_attach() {
             "--search-form-type",
             "typeahead",
             "--search-field-defaults-criteria",
-            "city=Jupiter",
+            "city=Riverside",
         ])
         .assert()
         .success();
@@ -875,9 +875,9 @@ fn featured_group_tiles_and_home_page_attach() {
         .create();
     let tile = server
         .mock("POST", "/api/v3/content/featured-pages/3/tiles/")
-        .match_body(Matcher::Json(json!({ "title": "Jupiter", "link": "/jupiter/", "cta": "View Homes", "image": "https://u/j.jpg" })))
+        .match_body(Matcher::Json(json!({ "title": "Riverside", "link": "/riverside/", "cta": "View Homes", "image": "https://u/j.jpg" })))
         .with_status(201)
-        .with_body(r#"{"id":3,"title":"Where We Work","tiles":[{"id":9,"title":"Jupiter","link":"/jupiter/","cta":"View Homes","image":"https://u/j.jpg"}]}"#)
+        .with_body(r#"{"id":3,"title":"Where We Work","tiles":[{"id":9,"title":"Riverside","link":"/riverside/","cta":"View Homes","image":"https://u/j.jpg"}]}"#)
         .create();
     cmd(&server, &dir)
         .args([
@@ -885,9 +885,9 @@ fn featured_group_tiles_and_home_page_attach() {
             "add-tile",
             "3",
             "--title",
-            "Jupiter",
+            "Riverside",
             "--link",
-            "/jupiter/",
+            "/riverside/",
             "--image",
             "https://u/j.jpg",
         ])
@@ -921,12 +921,12 @@ fn featured_group_tiles_and_home_page_attach() {
 
     server
         .mock("GET", "/api/v3/content/area-pages/23/")
-        .with_body(r#"{"id":23,"path":"/jupiter/"}"#)
+        .with_body(r#"{"id":23,"path":"/riverside/"}"#)
         .create();
     let area = server
         .mock("PATCH", "/api/v3/content/area-pages/23/")
-        .match_body(Matcher::Json(json!({ "landscape_image_override": "https://u/j.jpg", "landscape_image_override_alt_text": "Jupiter inlet" })))
-        .with_body(r#"{"id":23,"path":"/jupiter/","url":"https://x/jupiter/"}"#)
+        .match_body(Matcher::Json(json!({ "landscape_image_override": "https://u/j.jpg", "landscape_image_override_alt_text": "Riverside harbor" })))
+        .with_body(r#"{"id":23,"path":"/riverside/","url":"https://x/riverside/"}"#)
         .create();
     cmd(&server, &dir)
         .args([
@@ -936,7 +936,7 @@ fn featured_group_tiles_and_home_page_attach() {
             "--landscape",
             "https://u/j.jpg",
             "--landscape-alt",
-            "Jupiter inlet",
+            "Riverside harbor",
         ])
         .assert()
         .success();

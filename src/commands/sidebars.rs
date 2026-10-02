@@ -523,11 +523,11 @@ mod tests {
     #[test]
     fn parses_links() {
         let links =
-            parse_links(&["Jupiter=/jupiter/".into(), "Plain text".into()]).unwrap_or_default();
+            parse_links(&["Riverside=/riverside/".into(), "Plain text".into()]).unwrap_or_default();
         assert_eq!(
             links,
             vec![
-                json!({"anchor": "Jupiter", "url": "/jupiter/"}),
+                json!({"anchor": "Riverside", "url": "/riverside/"}),
                 json!({"anchor": "Plain text"})
             ]
         );

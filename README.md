@@ -189,9 +189,8 @@ Highlights:
   change the template and colour scheme, with an unsaved preview first.
 - **Blog landing page**: `blog get|update` for the blog's own title, meta and heading.
 - **Files**: upload images and PDFs to the site's media bucket, or have the
-  site fetch one from a URL (`--from-url`, including images an AI platform
-  generated), and get back the public URL to use in content, posts and
-  settings.
+  site fetch one from a URL (`--from-url`), and get back the public URL to
+  use in content, posts and settings.
 - **Browser checks**: `geekcli snapshot / --full` renders the whole page with
   your installed Chrome (driven over DevTools), while `--selector '.hero'`
   captures one component. `geekcli inspect / --assert "document.querySelectorAll('h1').length === 1"`

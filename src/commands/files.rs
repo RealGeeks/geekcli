@@ -67,7 +67,7 @@ pub enum FilesSub {
     /// Upload one or more local files into a folder
     #[command(after_help = "Notes:
   - The folder must exist (files mkdir). 8,000,000 bytes max; jpg/jpeg, png, gif, ico, mp4, pdf, txt, css only. HTML, SVG, XML and scripts are refused (files are served inline from a domain shared by every site); the stored type follows the extension.
-  - --from-url URL makes the site fetch the file itself, e.g. to copy a file that is already on u.realgeeks.media. Only https URLs on hosts the API allows (Real Geeks media and the file CDNs of AI platforms such as ChatGPT, Grok and Perplexity) are accepted; any other host is a validation error that names the allowed hosts. AI-platform URLs rarely end in a file name, so pass --name with the right extension.
+  - --from-url URL makes the site fetch the file itself, e.g. to copy a file that is already on u.realgeeks.media. Only https URLs on hosts the API allows are accepted; any other host is a validation error that lists the allowed ones. When the URL does not end in a file name, pass --name with the right extension.
   - -q prints the public URL to use in --facebook-image, <img src>, footers and file settings such as HEADER_LOGO.
   - Header logo: Real Geeks recommends 400x86 px, PNG, horizontal or text-based; upload at 2x (800x172) for sharp screens.
   - The CDN caches by path: after --overwrite a page may keep showing the old file. To replace an image that is already live, upload it under a new name and point the setting or content at that.")]
@@ -440,7 +440,7 @@ mod tests {
             Some("guide.pdf")
         );
         assert_eq!(
-            url_file_name("https://files.oaiusercontent.com/file-abc123"),
+            url_file_name("https://cdn.example.net/file-abc123"),
             None
         );
         assert_eq!(url_file_name("https://example.com/"), None);

@@ -219,15 +219,15 @@ fn area_page_search_describes_saved_search() {
     server
         .mock("GET", "/api/v3/content/area-pages/23/")
         .match_header("authorization", "Bearer rg_live_k")
-        .with_body(r#"{"id":23,"path":"/ballenisles/","search":{"id":10,"short_id":"a","description":"d","criteria":{}}}"#)
+        .with_body(r#"{"id":23,"path":"/lakeside/","search":{"id":10,"short_id":"a","description":"d","criteria":{}}}"#)
         .create();
     server
         .mock("GET", "/api/v2/search/a/")
         .match_query(Matcher::Any)
-        .with_header("x-total-count", "63970")
+        .with_header("x-total-count", "1200")
         .with_header(
             "x-description",
-            "Search having <strong>Community</strong>=Ballenisles",
+            "Search having <strong>Community</strong>=Lakeside",
         )
         .with_body("[]")
         .create();
@@ -241,9 +241,9 @@ fn area_page_search_describes_saved_search() {
         .clone();
     let doc = parse(&out);
     assert_eq!(doc["search_id"], "a");
-    assert_eq!(doc["total"], 63970);
-    assert_eq!(doc["description"], "Search having Community=Ballenisles");
-    assert_eq!(doc["page"]["path"], "/ballenisles/");
+    assert_eq!(doc["total"], 1200);
+    assert_eq!(doc["description"], "Search having Community=Lakeside");
+    assert_eq!(doc["page"]["path"], "/lakeside/");
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn choices_all_uses_the_autocomplete_index() {
     let dir = tempfile::tempdir().unwrap();
     server
         .mock("GET", "/api/v2/search/autocomplete-options/")
-        .with_body(r#"[{"field":"city","value":"Jupiter"},{"field":"subdivision","value":"Island at Abacoa"},{"field":"subdivision","value":"Abacoa Town Center 3"},{"field":"subdivision","value":"Mirasol"}]"#)
+        .with_body(r#"[{"field":"city","value":"Riverside"},{"field":"subdivision","value":"Island at Oak Ridge"},{"field":"subdivision","value":"Oak Ridge Town Center 3"},{"field":"subdivision","value":"Cedar Point"}]"#)
         .create();
     let out = cmd(&server, &dir)
         .args([
@@ -261,7 +261,7 @@ fn choices_all_uses_the_autocomplete_index() {
             "subdivision",
             "--all",
             "-s",
-            "abacoa",
+            "oak",
             "-q",
         ])
         .assert()
@@ -271,9 +271,9 @@ fn choices_all_uses_the_autocomplete_index() {
         .clone();
     let doc = String::from_utf8_lossy(&out);
     assert!(
-        doc.contains("Abacoa Town Center 3")
-            && doc.contains("Island at Abacoa")
-            && !doc.contains("Mirasol"),
+        doc.contains("Oak Ridge Town Center 3")
+            && doc.contains("Island at Oak Ridge")
+            && !doc.contains("Cedar Point"),
         "{doc}"
     );
 }

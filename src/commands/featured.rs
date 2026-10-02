@@ -42,10 +42,10 @@ pub enum FeaturedSub {
     /// Create a tile group (attach it with `home-page update --tile-group`)
     #[command(after_help = "Notes:
   - Titles are unique per site (422 otherwise); `featured get <title>` finds an existing group.
-  - Up to twelve tiles, shown in order. A tile is a short title, a site path (an area page /jupiter/ or a search URL /search/results/?city=Jupiter), button text and an optional image URL from `files upload -q`.
+  - Up to twelve tiles, shown in order. A tile is a short title, a site path (an area page /riverside/ or a search URL /search/results/?city=Riverside), button text and an optional image URL from `files upload -q`.
   - The block renders on anna-modern only; other designs ignore the home page's tile group.
   - `home-page update --tile-group <id or title>` shows it; `--tile-group null` detaches. Then take any hand-built area grid out of the home content and move photo credits to the footer.
-  - Long titles truncate on phones (\"Palm Beach Gard…\"); keep them to two words where you can.")]
+  - Long titles truncate on phones (\"North Riverside Hei…\"); keep them to two words where you can.")]
     Create(GroupArgs),
     /// Change a group's title or blurb
     Update {
@@ -113,7 +113,7 @@ pub struct TileArgs {
     /// Tile title (the area name; short, it truncates on phones)
     #[arg(long)]
     pub title: String,
-    /// Site path (/jupiter/, /search/results/?city=Jupiter) or an http(s)/mailto/tel URL
+    /// Site path (/riverside/, /search/results/?city=Riverside) or an http(s)/mailto/tel URL
     #[arg(long)]
     pub link: String,
     /// Button text
@@ -133,7 +133,7 @@ pub struct UpdateTileArgs {
     /// Tile title (the area name)
     #[arg(long)]
     pub title: Option<String>,
-    /// Site path: an area page (/jupiter/) or a search URL
+    /// Site path: an area page (/riverside/) or a search URL
     #[arg(long)]
     pub link: Option<String>,
     /// Button text

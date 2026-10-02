@@ -225,7 +225,7 @@ fn upload_from_url_without_a_file_name_needs_name() {
             "files",
             "upload",
             "--from-url",
-            "https://files.oaiusercontent.com/file-abc123",
+            "https://cdn.example.net/file-abc123",
         ])
         .assert()
         .code(2)

@@ -280,7 +280,7 @@ geekcli pages revisions /buying/ --limit 5     # newest first: id, when, who, fi
 geekcli pages revision /buying/ 318            # what a revert would restore, per field
 geekcli pages revert /buying/ 318              # undo 318 and everything after it
 geekcli agent-pages revisions /jordan-avery/
-geekcli area-pages revert /jupiter/ 402
+geekcli area-pages revert /riverside/ 402
 geekcli posts revisions spring-market-update
 geekcli posts revision spring-market-update 512
 geekcli footers revisions "Default Footer"
@@ -317,7 +317,7 @@ These commands, which need no API key, make that visible:
 geekcli search fields                 # the fields this site accepts, with defaults
 geekcli search choices city           # valid values for a field
 geekcli search choices city -s beach  # filter the values
-geekcli search choices subdivision --all -s abacoa   # every value the site knows, all cities
+geekcli search choices subdivision --all -s oak   # every value the site knows, all cities
 
 # What the site understands; ignored keys are listed and exit code 5 is returned
 geekcli search check list_price_min=1000000 type=res type=con city="Key Biscayne"
@@ -340,13 +340,13 @@ page's `search_id` refer to.
 
 Every content page, area page and the home page can show a saved search.
 Inspect it with `geekcli pages search /buying/` or `geekcli area-pages
-search /ballenisles/`: the description, live match count and URL. A
+search /lakeside/`: the description, live match count and URL. A
 description mentioning a field that `search fields` does not list is a
 search that filters nothing. Fix it by attaching a new search:
 
 ```bash
-geekcli area-pages update /ballenisles/ --search-criteria subdivision=Ballenisles
-geekcli pages update /featured/ --search-criteria county="Palm Beach" \
+geekcli area-pages update /lakeside/ --search-criteria subdivision=Lakeside
+geekcli pages update /featured/ --search-criteria county="Lake" \
     --search-criteria list_price_min=5000000 --search-criteria type=res
 geekcli pages update /featured/ --search a        # an existing search's short id
 geekcli home-page update --search null            # detach
@@ -403,8 +403,8 @@ geekcli sidebars get "Blog Sidebar"
 geekcli sidebars create --name "Luxury Sidebar"
 geekcli sidebars add-html "Luxury Sidebar" --html-file card.md          # Markdown converts
 geekcli sidebars add-links "Luxury Sidebar" --header "Featured Areas" --header-url /areas/ \
-    --link "Jupiter=/jupiter/" --link "Palm Beach=/palm-beach/" --columns 2
-geekcli sidebars update-item 5 51 --link "Jupiter=/jupiter/" --link "Boca Raton=/boca-raton/"
+    --link "Riverside=/riverside/" --link "Fairview=/fairview/" --columns 2
+geekcli sidebars update-item 5 51 --link "Riverside=/riverside/" --link "Millbrook=/millbrook/"
 geekcli sidebars update-item 5 50 --html "<p>New card</p>"
 geekcli sidebars move-item 5 51 --to 0
 geekcli sidebars remove-item 5 50
@@ -417,7 +417,7 @@ Item JSON shapes, for `--data`:
 ```json
 {"type": "html", "html": "<p>Sanitized HTML</p>"}
 {"type": "links", "header": {"text": "Featured Areas", "url": "/areas/"},
- "links": [{"url": "/jupiter/", "anchor": "Jupiter"}, {"anchor": "plain text"}], "columns": 2}
+ "links": [{"url": "/riverside/", "anchor": "Riverside"}, {"anchor": "plain text"}], "columns": 2}
 ```
 
 Attach a sidebar to a page with `geekcli pages update <ref> --sidebar
@@ -454,10 +454,10 @@ button text and a page link. This is the native version of an area grid.
 
 ```bash
 geekcli featured create --title "Where We Live" --blurb "The neighborhoods we know best"
-geekcli featured add-tile "Where We Live" --title Jupiter --link /jupiter/ \
-    --cta "View Homes" --image https://u.realgeeks.media/<site>/areas/jupiter.jpg
+geekcli featured add-tile "Where We Live" --title Riverside --link /riverside/ \
+    --cta "View Homes" --image https://u.realgeeks.media/<site>/areas/riverside.jpg
 geekcli featured get "Where We Live"
-geekcli featured update-tile 3 9 --cta "Explore Jupiter"
+geekcli featured update-tile 3 9 --cta "Explore Riverside"
 geekcli featured set-tiles 3 --data @tiles.json         # entries with an id are kept
 geekcli home-page update --tile-group "Where We Live"
 geekcli home-page update --tile-group null              # detach
@@ -467,7 +467,7 @@ Every page (content, area, agent and home) can also carry its own
 **landscape image or video**, the big picture at the top:
 
 ```bash
-geekcli area-pages update /jupiter/ --landscape https://u.realgeeks.media/<site>/areas/jupiter.jpg --landscape-alt "Jupiter Inlet"
+geekcli area-pages update /riverside/ --landscape https://u.realgeeks.media/<site>/areas/riverside.jpg --landscape-alt "Riverside Harbor"
 geekcli pages update /buying/ --landscape none          # hide the section on this page
 geekcli pages update /buying/ --landscape null          # back to the site's header image
 ```
@@ -480,10 +480,10 @@ Things learned on a real site:
 - Group titles are unique per site: a second `create` with the same title
   is a 422. `featured get <title>` finds the existing one, and `featured
   get` shows `used_by_home_page`.
-- A tile link is a site path, an area page (`/jupiter/`) or a search URL
-  (`/search/results/?city=Jupiter&list_price_min=1000000`), or an
+- A tile link is a site path, an area page (`/riverside/`) or a search URL
+  (`/search/results/?city=Riverside&list_price_min=1000000`), or an
   http(s)/mailto/tel URL. The image URL may not contain spaces, quotes or
-  parentheses. Keep tile titles to a word or two; "Palm Beach Gardens"
+  parentheses. Keep tile titles to a word or two; "North Riverside Heights"
   truncates on phones.
 - Deleting the group the home page shows is a 409. Detach it first
   (`home-page update --tile-group null`) or pass `--force`.
@@ -500,9 +500,9 @@ Content pages, area pages and the home page all take:
 
 ```bash
 geekcli pages update /buying/ --search-form-type typeahead
-geekcli pages update /buying/ --search-field-defaults-criteria city=Jupiter   # pre-fills the form
+geekcli pages update /buying/ --search-field-defaults-criteria city=Riverside   # pre-fills the form
 geekcli pages update /buying/ --search-field-defaults null
-geekcli pages update /buying/ --listing-header "Homes in Jupiter" --number-of-properties 24
+geekcli pages update /buying/ --listing-header "Homes in Riverside" --number-of-properties 24
 ```
 
 `--number-of-properties` must be one of 0, 3, 5, 6, 10, 12, 15, 20, 24, 25,
@@ -607,13 +607,11 @@ serving the old file for a long time; to replace a live image, upload it
 under a new name and repoint whatever uses it.
 
 `--from-url` has the site fetch the file itself instead of uploading a local
-one. It takes https URLs on the hosts the API allows: `u.realgeeks.media`
-(to copy a file that is already uploaded) and the file CDNs of AI platforms
-such as ChatGPT, Grok and Perplexity, so an agent can store an image it
-generated without downloading it first. Any other host is a validation
-error (exit 5) that names the allowed hosts. The stored name defaults to the
-URL's last segment; AI-platform URLs rarely end in a file name, so pass
-`--name` with the right extension.
+one. It takes https URLs on the hosts the API allows, such as
+`u.realgeeks.media` to copy a file that is already uploaded; a host that
+is not allowed is a validation error (exit 5) whose message lists the ones
+that are. The stored name defaults to the URL's last segment; when the URL
+does not end in a file name, pass `--name` with the right extension.
 
 Deleting a folder removes its files from storage first; if storage refuses
 some of them the call fails (exit 1) and those files stay listed, so run the
