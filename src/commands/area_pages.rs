@@ -87,8 +87,10 @@ pub struct FieldArgs {
     pub fields: TreeFields,
     /// Name of the area (required on create)
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub area_name: Option<String>,
     #[arg(long, value_name = "BOOL", value_parser = parse_bool)]
+    #[arg(help_heading = super::heading::LAYOUT)]
     pub featured: Option<bool>,
 }
 

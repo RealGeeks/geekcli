@@ -33,6 +33,18 @@ use crate::error::{Error, Result};
 use crate::html;
 use crate::output::Printer;
 
+/// `--help` section names for write flags, so a required flag does not hide
+/// among optional ones. Create and update share arg structs, so each name
+/// has to read true on both commands.
+pub mod heading {
+    pub const REQUIRED: &str = "Required on create";
+    pub const CONTENT: &str = "Content";
+    pub const PUBLISHING: &str = "Publishing";
+    pub const SEARCH: &str = "Search & listings";
+    pub const SEO: &str = "SEO";
+    pub const LAYOUT: &str = "Layout & display";
+}
+
 pub struct Context {
     pub client: Client,
     pub printer: Printer,
