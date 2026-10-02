@@ -70,6 +70,11 @@ pub enum Error {
     #[error("{0}")]
     Io(String),
 
+    /// Whatever reads our output (`| head`, a closed pager) went away. Not a
+    /// failure: `main` exits 0 without printing anything.
+    #[error("output closed")]
+    BrokenPipe,
+
     #[error("{0}")]
     Other(String),
 
@@ -120,6 +125,7 @@ impl Error {
             Error::Network(_) => exit::NETWORK,
             Error::Warnings(_) => exit::VALIDATION,
             Error::Io(_) | Error::Other(_) => exit::GENERAL,
+            Error::BrokenPipe => 0,
         }
     }
 
@@ -132,6 +138,7 @@ impl Error {
             Error::Api { code, .. } => code,
             Error::Network(_) => "network",
             Error::Io(_) => "io",
+            Error::BrokenPipe => "broken_pipe",
             Error::Other(_) => "error",
             Error::Warnings(_) => "warnings",
         }
@@ -190,12 +197,22 @@ fn api_exit_code(status: u16) -> i32 {
 
 impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
+        if err.kind() == std::io::ErrorKind::BrokenPipe {
+            return Error::BrokenPipe;
+        }
         Error::Io(err.to_string())
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
+        // writing JSON to stdout fails as a serde_json error too
+        if err.io_error_kind() == Some(std::io::ErrorKind::BrokenPipe) {
+            return Error::BrokenPipe;
+        }
+        if err.is_io() {
+            return Error::Io(err.to_string());
+        }
         Error::Usage(format!("invalid JSON: {err}"))
     }
 }
