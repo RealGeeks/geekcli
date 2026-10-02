@@ -247,9 +247,28 @@ detaches either. `--parent` accepts an id, `null`, a path or a slug. Pages nest 
 (search, market reports, the blog root); those come back as validation
 errors under `fields.__all__`.
 
-Area pages are the same with `--area-name` (required) and `--featured
-true|false`: `geekcli area-pages create --slug downtown --area-name Downtown
---anchor-text Downtown --content-file downtown.md`.
+**Area pages** are the same with `--area-name` (required) and `--featured
+true|false`. Three things differ from what the flags suggest:
+
+- `--area-name` is display text only: it fills the listing header and
+  titles. It does not decide which listings the page shows.
+- The page's search is what scopes its listings. Give it with
+  `--search-criteria key=value` (repeatable) or `--search <saved search id>`.
+  Common keys are `city`, `county`, `subdivision` and `zip`, but names and
+  values are site specific; confirm them with `search fields` and
+  `search choices <field>`, and the result with `search check` and
+  `search run` before creating (§11). `area-pages create` fails with exit
+  code 2 when no search is given; `--no-search` creates the page anyway,
+  with listings that are not scoped to the area.
+- There is no draft state. An area page is public as soon as it is
+  created, and every update is live immediately.
+
+```bash
+geekcli search run subdivision=Downtown --per-page 3      # listings come back?
+geekcli area-pages create --slug downtown --area-name Downtown \
+  --anchor-text Downtown --search-criteria subdivision=Downtown \
+  --content-file downtown.md
+```
 
 API reference: [Content pages](https://developers.realgeeks.com/content-api/site-pages/#content-pages), [Agent landing pages](https://developers.realgeeks.com/content-api/site-pages/#agent-landing-pages), [Area pages](https://developers.realgeeks.com/content-api/site-pages/#area-pages), [Page templates](https://developers.realgeeks.com/content-api/site-pages/#page-templates).
 
@@ -896,6 +915,8 @@ API reference: [the full Content API](https://developers.realgeeks.com/content-a
 1. `geekcli me --json` to confirm the site and scopes before writing.
 2. `geekcli search fields` before writing any search link or page
    search; verify each with `search check`, count with `search run`.
+   An area page's listings come from its `--search-criteria`, not its
+   `--area-name`, and it is public the moment it is created (§8).
 3. Create posts as drafts; publish with `geekcli posts publish` once
    reviewed. A post created with `--status published` can read
    `scheduled` for the first second; it is published.
