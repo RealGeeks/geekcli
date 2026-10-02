@@ -16,6 +16,7 @@ pub const COLUMNS: &[Column] = &[
     col("id", "/id"),
     col("name", "/name"),
     col("default", "/default"),
+    col("used_by_count", "/used_by_count"),
     col("used_by", "/used_by"),
     col("content", "/content"),
 ];
@@ -47,6 +48,18 @@ pub enum FootersSub {
         #[arg(long)]
         force: bool,
     },
+    /// List a footer's revisions, newest first
+    Revisions {
+        /// Footer id or name
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { reference: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    Revert { reference: String, rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -84,7 +97,7 @@ pub fn run(ctx: &Context, cmd: FootersCommand) -> Result<()> {
             let footer = resolve(ctx, &reference)?;
             if ctx.printer.format == Format::Table {
                 // the table truncates content; show it whole below
-                ctx.printer.one(&footer, &COLUMNS[..4])?;
+                ctx.printer.one(&footer, &COLUMNS[..5])?;
                 println!("{}", cell(footer.get("content").unwrap_or(&Value::Null)));
                 return Ok(());
             }
@@ -120,6 +133,20 @@ pub fn run(ctx: &Context, cmd: FootersCommand) -> Result<()> {
                 ctx.printer.raw(&json!({ "deleted": true, "id": id }))?;
             }
             Ok(())
+        }
+        FootersSub::Revisions { reference, limit } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::list(ctx, &detail_path(id), limit)
+        }
+        FootersSub::Revision { reference, rev } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::show(ctx, &detail_path(id), rev)
+        }
+        FootersSub::Revert { reference, rev } => {
+            let footer = resolve(ctx, &reference)?;
+            let id = id_of(&footer)?;
+            let label = format!("footer {id} \"{}\"", cell(&footer["name"]));
+            super::revisions::revert(ctx, &detail_path(id), rev, &label)
         }
     }
 }

@@ -2,9 +2,10 @@
 //! pages, plus `area_name` and `featured`.
 
 use clap::{Args, Subcommand};
+use serde_json::Value;
 
 use super::pages::{self, TreeFields, TreeListArgs, AREA_PATH};
-use super::{list_and_print, parse_bool, print_written, push, Context};
+use super::{id_of, list_and_print, parse_bool, print_written, push, Context};
 use crate::error::Result;
 use crate::output::{col, Column};
 
@@ -58,6 +59,17 @@ pub enum AreaPagesSub {
     },
     /// Show the saved property search an area page displays (its search_id)
     Search { reference: String },
+    /// List an area page's revisions, newest first
+    Revisions {
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { reference: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    Revert { reference: String, rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -116,7 +128,7 @@ pub fn run(ctx: &Context, cmd: AreaPagesCommand) -> Result<()> {
             print_written(ctx, &created, DETAIL_COLUMNS, "Created")
         }
         AreaPagesSub::Update(args) => {
-            let id = super::id_of(&pages::resolve(
+            let id = id_of(&pages::resolve(
                 ctx,
                 AREA_PATH,
                 &args.reference,
@@ -146,6 +158,27 @@ pub fn run(ctx: &Context, cmd: AreaPagesCommand) -> Result<()> {
         ),
         AreaPagesSub::Search { reference } => {
             pages::page_search(ctx, AREA_PATH, &reference, "area page")
+        }
+        AreaPagesSub::Revisions { reference, limit } => {
+            let id = id_of(&pages::resolve(ctx, AREA_PATH, &reference, "area page")?)?;
+            super::revisions::list(ctx, &pages::detail_path(AREA_PATH, id), limit)
+        }
+        AreaPagesSub::Revision { reference, rev } => {
+            let id = id_of(&pages::resolve(ctx, AREA_PATH, &reference, "area page")?)?;
+            super::revisions::show(ctx, &pages::detail_path(AREA_PATH, id), rev)
+        }
+        AreaPagesSub::Revert { reference, rev } => {
+            let page = pages::resolve(ctx, AREA_PATH, &reference, "area page")?;
+            let label = format!(
+                "area page {}",
+                page.get("path").and_then(Value::as_str).unwrap_or("")
+            );
+            super::revisions::revert(
+                ctx,
+                &pages::detail_path(AREA_PATH, id_of(&page)?),
+                rev,
+                &label,
+            )
         }
     }
 }

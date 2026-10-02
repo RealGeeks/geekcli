@@ -24,7 +24,10 @@ geekcli auth login --site www.example.com            # opens the site's approval
 GEEKCLI_SITE=www.example.com GEEKCLI_API_KEY=rg_live_... geekcli me   # a key from Admin → API keys
 ```
 
-Then read the manual before writing anything:
+The API behind it is documented at
+<https://developers.realgeeks.com/content-api/> (see its
+[changelog](https://developers.realgeeks.com/content-api/changelog/) for what is
+new). Then read the CLI's manual before writing anything:
 
 ```bash
 geekcli guide            # the whole guide for scripts and agents (docs/GUIDE.md)
@@ -41,8 +44,8 @@ The rules that keep a live site safe:
    `error.fields` and fix those fields.
 3. `posts create` makes drafts unless you pass `--status published`.
 4. `update` only changes the flags you pass. Avoid `--replace`.
-5. Note `pages revisions <ref> --limit 1` before a large rewrite, so a bad
-   result is one `pages revert` away.
+5. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
+   page, post or footer, so a bad result is one `revert` away.
 6. Check search criteria with `search check` before putting them on a page;
    the site silently drops criteria it does not know.
 7. After a visible change, look at it: `geekcli snapshot <path> --full`
@@ -121,7 +124,10 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
   silently, so `understand()` in `search.rs` always diffs input keys against
   what `/metadata/` echoes back.
 - Field and filter names mirror the API exactly. When the API grows a field,
-  add a flag with the same name.
+  add a flag with the same name. The public reference is
+  <https://developers.realgeeks.com/content-api/>, and its changelog lists
+  what the API has added; every `docs/GUIDE.md` section ends with an
+  `API reference:` link to the matching part of it.
 
 ### Build and test
 

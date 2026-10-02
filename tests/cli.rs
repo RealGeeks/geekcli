@@ -699,3 +699,142 @@ fn blog_home_page_get_and_update() {
     patch.assert();
     env.cmd().args(["blog", "update"]).assert().code(2);
 }
+
+const REVISION: &str = r#"{"id":512,"at":"2026-09-30T14:00:00+00:00","by":{"name":"Jordan Avery","api_key":"cli","locutus_id":7},"action":"changed","message":"","changed_fields":["body","status"],"revertible":true}"#;
+
+#[test]
+fn posts_revisions_lists_and_limits() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "hello".into()))
+        .with_body(r#"{"results":[{"id":9,"slug":"hello"}],"pagination":{}}"#)
+        .create();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/blog/posts/9/revisions/")
+        .with_body(format!(r#"{{"results":[{REVISION},{REVISION}]}}"#))
+        .create();
+
+    let out = env
+        .cmd()
+        .args(["posts", "revisions", "hello", "--limit", "1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rows = parse(&out)["results"].clone();
+    assert_eq!(rows.as_array().map(Vec::len), Some(1), "{rows}");
+    assert_eq!(rows[0]["changed_fields"][1], "status");
+    list.assert();
+}
+
+#[test]
+fn posts_revision_shows_the_preview() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/blog/posts/9/")
+        .with_body(r#"{"id":9,"slug":"hello"}"#)
+        .create();
+    let preview = env
+        .server
+        .mock("GET", "/api/v3/blog/posts/9/revisions/512/")
+        .with_body(r#"{"id":512,"action":"changed","revertible":true,"preview":{"status":{"now":"published","after_revert":"draft"}}}"#)
+        .create();
+
+    let out = env
+        .cmd()
+        .args(["posts", "revision", "9", "512"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["preview"]["status"]["after_revert"], "draft");
+    preview.assert();
+}
+
+#[test]
+fn area_pages_revert_posts_to_the_revision() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/content/area-pages/23/")
+        .with_body(r#"{"id":23,"path":"/jupiter/"}"#)
+        .create();
+    let revert = env
+        .server
+        .mock(
+            "POST",
+            "/api/v3/content/area-pages/23/revisions/402/revert/",
+        )
+        .with_body(r#"{"id":23,"path":"/jupiter/","area_name":"Jupiter"}"#)
+        .create();
+
+    let out = env
+        .cmd()
+        .args(["-y", "area-pages", "revert", "23", "402"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["area_name"], "Jupiter");
+    revert.assert();
+}
+
+#[test]
+fn footers_revisions_and_a_creation_revert_conflict() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/content/footers/")
+        .with_body(
+            r#"{"results":[{"id":1,"name":"Default Footer","default":true,"content":"<p>x</p>"}]}"#,
+        )
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/footers/1/")
+        .with_body(r#"{"id":1,"name":"Default Footer","default":true,"content":"<p>x</p>","used_by":[],"used_by_count":0}"#)
+        .create();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/content/footers/1/revisions/")
+        .with_body(format!(r#"{{"results":[{REVISION}]}}"#))
+        .create();
+    env.server
+        .mock("POST", "/api/v3/content/footers/1/revisions/500/revert/")
+        .with_status(409)
+        .with_body(r#"{"error":{"code":"conflict","message":"Revision 500 cannot be reverted (nothing to undo)"}}"#)
+        .create();
+
+    env.cmd()
+        .args(["footers", "revisions", "Default Footer"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("512"));
+    list.assert();
+
+    env.cmd()
+        .args(["-y", "footers", "revert", "1", "500"])
+        .assert()
+        .code(6)
+        .stderr(predicate::str::contains("nothing to undo"));
+}
+
+#[test]
+fn pages_list_no_longer_sends_include_content() {
+    let mut env = Env::new();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/content/pages/")
+        .match_query(Matcher::Missing)
+        .with_body(r#"{"results":[{"id":1,"path":"/a/"}],"pagination":{}}"#)
+        .create();
+
+    // --no-content is hidden and ignored: lists never carry content now
+    env.cmd()
+        .args(["pages", "list", "--no-content"])
+        .assert()
+        .success();
+    list.assert();
+}

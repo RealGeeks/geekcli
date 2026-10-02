@@ -67,6 +67,7 @@ pub enum FilesSub {
     /// Upload one or more local files into a folder
     #[command(after_help = "Notes:
   - The folder must exist (files mkdir). 8,000,000 bytes max; jpg/jpeg, png, gif, ico, mp4, pdf, txt, css only. HTML, SVG, XML and scripts are refused (files are served inline from a domain shared by every site); the stored type follows the extension.
+  - --from-url URL makes the site fetch the file itself, e.g. to copy a file that is already on u.realgeeks.media. Only https URLs on hosts the API allows (Real Geeks media and the file CDNs of AI platforms such as ChatGPT, Grok and Perplexity) are accepted; any other host is a validation error that names the allowed hosts. AI-platform URLs rarely end in a file name, so pass --name with the right extension.
   - -q prints the public URL to use in --facebook-image, <img src>, footers and file settings such as HEADER_LOGO.
   - Header logo: Real Geeks recommends 400x86 px, PNG, horizontal or text-based; upload at 2x (800x172) for sharp screens.
   - The CDN caches by path: after --overwrite a page may keep showing the old file. To replace an image that is already live, upload it under a new name and point the setting or content at that.")]
@@ -88,8 +89,11 @@ pub enum FilesSub {
 #[derive(Debug, Args)]
 pub struct UploadArgs {
     /// Local files to upload
-    #[arg(value_name = "FILE", required = true)]
+    #[arg(value_name = "FILE", required_unless_present = "from_url")]
     pub files: Vec<String>,
+    /// Have the site fetch the file from this https URL instead of uploading a local one
+    #[arg(long, value_name = "URL", conflicts_with = "files")]
+    pub from_url: Option<String>,
     /// Destination folder on the site (default: root)
     #[arg(long, value_name = "FOLDER", default_value = "")]
     pub to: String,
@@ -300,6 +304,9 @@ fn list(
 }
 
 fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
+    if let Some(url) = &args.from_url {
+        return upload_from_url(ctx, args, url);
+    }
     if args.name.is_some() && args.files.len() > 1 {
         return Err(Error::Usage(
             "--name only applies when uploading a single file".into(),
@@ -380,9 +387,65 @@ pub fn guess_content_type(name: &str) -> &'static str {
     }
 }
 
+/// `POST files/upload/` as JSON with `content_url`: the site downloads the
+/// file. The stored name defaults to the URL's last path segment.
+fn upload_from_url(ctx: &Context, args: &UploadArgs, url: &str) -> Result<()> {
+    let name = match &args.name {
+        Some(name) => name.clone(),
+        None => url_file_name(url)
+            .ok_or_else(|| {
+                Error::Usage(format!(
+                    "{url} does not end in a file name with an extension; pass --name, e.g. --name photo.jpg"
+                ))
+            })?,
+    };
+    let mut body = json!({
+        "path": normalize(&args.to),
+        "name": name,
+        "content_url": url,
+    });
+    if let Some(content_type) = &args.content_type {
+        body["content_type"] = json!(content_type);
+    }
+    if args.overwrite {
+        body["overwrite"] = json!(true);
+    }
+    let entry = ctx.client.post(&format!("{PATH}upload/"), &body)?.body;
+    ctx.printer
+        .note(&format!("Fetched {url} → {}", cell(&entry["url"])));
+    print_entry(ctx, &entry)
+}
+
+/// The URL's last path segment when it looks like a file name (has an
+/// extension); the site decides the stored type from the extension.
+fn url_file_name(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let segment = parsed.path_segments()?.rev().find(|s| !s.is_empty())?;
+    let (stem, ext) = segment.rsplit_once('.')?;
+    (!stem.is_empty() && !ext.is_empty()).then(|| segment.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_a_fetched_file_from_its_url() {
+        assert_eq!(
+            url_file_name("https://u.realgeeks.media/site/images/logo.png?v=2").as_deref(),
+            Some("logo.png")
+        );
+        assert_eq!(
+            url_file_name("https://u.realgeeks.media/site/docs/guide.pdf/").as_deref(),
+            Some("guide.pdf")
+        );
+        assert_eq!(
+            url_file_name("https://files.oaiusercontent.com/file-abc123"),
+            None
+        );
+        assert_eq!(url_file_name("https://example.com/"), None);
+        assert_eq!(url_file_name("not a url"), None);
+    }
 
     #[test]
     fn splits_and_normalizes_paths() {

@@ -183,3 +183,67 @@ fn upload_conflict_exits_6() {
         .code(6)
         .stderr(predicate::str::contains("already exists"));
 }
+
+#[test]
+fn upload_from_url_asks_the_site_to_fetch() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let upload = server
+        .mock("POST", "/api/v3/files/upload/")
+        .match_header("content-type", "application/json")
+        .match_body(Matcher::Json(json!({
+            "path": "images/2026",
+            "name": "logo.png",
+            "content_url": "https://u.realgeeks.media/example/images/logo.png?v=2",
+        })))
+        .with_status(201)
+        .with_body(LOGO)
+        .create();
+
+    cmd(&server, &dir)
+        .args([
+            "-q",
+            "files",
+            "upload",
+            "--from-url",
+            "https://u.realgeeks.media/example/images/logo.png?v=2",
+            "--to",
+            "images/2026",
+        ])
+        .assert()
+        .success()
+        .stdout("https://u.realgeeks.media/example/images/logo.png\n");
+    upload.assert();
+}
+
+#[test]
+fn upload_from_url_without_a_file_name_needs_name() {
+    let server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    cmd(&server, &dir)
+        .args([
+            "files",
+            "upload",
+            "--from-url",
+            "https://files.oaiusercontent.com/file-abc123",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--name"));
+}
+
+#[test]
+fn upload_rejects_a_local_file_with_from_url() {
+    let server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    cmd(&server, &dir)
+        .args([
+            "files",
+            "upload",
+            "hero.jpg",
+            "--from-url",
+            "https://u.realgeeks.media/a/b.png",
+        ])
+        .assert()
+        .code(2);
+}

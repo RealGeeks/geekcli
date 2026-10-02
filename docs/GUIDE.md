@@ -5,6 +5,13 @@ a time through the site's API (`/api/v3/`): blog posts and categories, content,
 area and agent pages, the home page, navigation, sidebars, footers, settings,
 design and files. This guide is the contract an automated caller can rely on.
 
+The API itself is documented at <https://developers.realgeeks.com/content-api/>,
+with a [changelog](https://developers.realgeeks.com/content-api/changelog/) of
+what it has gained. Each section below links to the matching part of that
+reference. The API is switched off until Real Geeks enables it for a site
+(`api_disabled`, exit 3); site owners can
+[request access](https://developers.realgeeks.com/request-api-access/).
+
 ## 1. Setup
 
 Install:
@@ -61,6 +68,8 @@ Precedence: flags, then environment, then the config file.
 Shell completion: `geekcli completions zsh` (or bash, fish, powershell)
 prints a script to source from your shell profile.
 
+API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling), [Authentication](https://developers.realgeeks.com/content-api/#authentication), [Who am I](https://developers.realgeeks.com/content-api/#who-am-i).
+
 ## 2. Output
 
 - **When stdout is not a terminal, output is JSON.** Force it with `--json`
@@ -92,6 +101,8 @@ prints a script to source from your shell profile.
 429 responses are retried automatically up to `--max-retries` (default 3),
 honouring `Retry-After`. The limit is 600 requests per hour per key.
 Errors that have an obvious next step carry a `hint` (in the JSON envelope and after the table message).
+
+API reference: [Conventions](https://developers.realgeeks.com/content-api/#conventions).
 
 ## 4. Resources and references
 
@@ -156,6 +167,8 @@ Notes:
   response is `draft`, `scheduled` or `published`.
 - `--replace` on `update` sends PUT: omitted optional fields reset.
 
+API reference: [Blog posts](https://developers.realgeeks.com/content-api/blog-posts/#blog-posts).
+
 ## 6. Blog landing page
 
 `geekcli blog get` and `geekcli blog update` manage the blog's own
@@ -163,6 +176,8 @@ page: `--title`, `--meta-description`, `--meta-keywords`, and `--content`
 (the heading shown above the post list, usually one `<h2>`). The site
 creates the page on the first update if it has none. When rebranding, this
 heading is easy to miss: it is not a post and not a content page.
+
+API reference: [Blog home page](https://developers.realgeeks.com/content-api/blog-posts/#blog-home-page).
 
 ## 7. Categories
 
@@ -172,6 +187,8 @@ geekcli categories create --name "Market Updates"           # slug derived
 geekcli categories update market-updates --name "Market News"
 geekcli categories delete market-updates --force            # also untags posts
 ```
+
+API reference: [Blog categories](https://developers.realgeeks.com/content-api/blog-posts/#blog-categories).
 
 ## 8. Content pages
 
@@ -191,6 +208,10 @@ geekcli pages update /resources/sellers/ --meta-description "..."
 geekcli pages update 17 --parent null            # move to top level
 geekcli pages delete 17 --orphan-children        # children become top-level
 ```
+
+Lists (`pages list`, `area-pages list`, `agent-pages list`) never include
+`content`, `extra_content` or `agents`, which keeps them fast on sites with
+tens of thousands of pages. Use `get` for a page's content.
 
 Templates can add areas (`geekcli templates list` shows them). Set
 them with `--area "Name=value"`, repeatable; `Name=null` clears one. The
@@ -230,31 +251,51 @@ Area pages are the same with `--area-name` (required) and `--featured
 true|false`: `geekcli area-pages create --slug downtown --area-name Downtown
 --anchor-text Downtown --content-file downtown.md`.
 
+API reference: [Content pages](https://developers.realgeeks.com/content-api/site-pages/#content-pages), [Agent landing pages](https://developers.realgeeks.com/content-api/site-pages/#agent-landing-pages), [Area pages](https://developers.realgeeks.com/content-api/site-pages/#area-pages), [Page templates](https://developers.realgeeks.com/content-api/site-pages/#page-templates).
+
 ## 9. Revisions and undo
 
-Content pages, agent landing pages and the home page keep a revision for
-every save that changes a field the admin's Versions page tracks: content,
-template, anchor text, sidebar, footer, search, search field defaults,
-search and listing headers, number and placement of listings, and template
-areas (`--area`). Revisions are attributed to the API key. Changes to other
-fields (slug, parent, title, meta fields, landscape image, search form type)
-go into the site's change log but cannot be undone here; re-read before
-overwriting those. A revert that would create a page loop or a URL another
-page now uses is refused.
+Content pages, agent landing pages, area pages, blog posts, footers and the
+home page keep a revision for every save that changes a tracked field. It is
+the same history as the admin's Versions page, and each revision is
+attributed to the API key that made it.
+
+| Resource | Tracked fields |
+| --- | --- |
+| content and agent pages | content, template, anchor text, sidebar, footer, search, search field defaults, search and listing headers, number and placement of listings, template areas (`--area`) |
+| area pages | the same as content pages except template and areas, plus `area_name` and `featured` |
+| blog posts | title, slug, body, status, publish, page title, meta fields, Facebook image |
+| footers | content |
+| home page | title, meta description and keywords, content, sidebar, footer, search and listing fields, featured agents, listing display type |
+
+Changes to untracked fields (a page's slug, parent, title, meta fields,
+landscape image and search form type; the home page's landscape image; a
+post's categories) go into the
+site's change log but cannot be undone here; re-read before overwriting
+those. Because a post's slug, status and publish date are tracked, reverting
+a post can change its URL or publish or unpublish it: preview first.
 
 ```bash
 geekcli pages revisions /buying/ --limit 5     # newest first: id, when, who, fields
 geekcli pages revision /buying/ 318            # what a revert would restore, per field
 geekcli pages revert /buying/ 318              # undo 318 and everything after it
+geekcli agent-pages revisions /jordan-avery/
+geekcli area-pages revert /jupiter/ 402
+geekcli posts revisions spring-market-update
+geekcli posts revision spring-market-update 512
+geekcli footers revisions "Default Footer"
+geekcli footers revert 1 530
 geekcli home-page revisions
 geekcli home-page revert 325
-geekcli agent-pages revisions /jordan-avery/
 ```
 
 A revert is itself a revision, so a mistaken revert is undone by reverting
-the revert. The creation revision cannot be reverted; delete the page
-instead. Posts, sidebars, nav bars, footers, settings, design and files
-have change logs but no undo.
+the revert. The creation revision cannot be reverted (exit 6, `conflict`);
+delete the object instead. Revision lists are not paginated; `--limit`
+trims them. Sidebars, nav bars, featured pages, categories, the blog
+landing page, settings, design and files have change logs but no undo.
+
+API reference: [Revisions and undo](https://developers.realgeeks.com/content-api/site-pages/#revisions-and-undo).
 
 ## 10. Home page
 
@@ -262,6 +303,8 @@ have change logs but no undo.
 geekcli home-page get
 geekcli home-page update --search-header "Find your next home" --content-file home.html
 ```
+
+API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
 
 ## 11. Property-search criteria and links
 
@@ -317,6 +360,8 @@ Values are site specific. Before writing a search link, confirm the field
 exists with `search fields`, the value with `search choices`, and the
 result with `search run`.
 
+API reference: [Searches](https://developers.realgeeks.com/content-api/searches/).
+
 ## 12. Navigation bars
 
 A site has one bar per position (`top_primary`, `bottom_primary`,
@@ -342,13 +387,15 @@ URL as a convenience. Ids are stable: `add --at` and `move` send a
 position, and `set` keeps the rows whose ids you include, so
 `--data '[{"id": 12}, {"id": 10}]'` is a pure reorder.
 
+API reference: [Navigation bars](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#navigation-bars).
+
 ## 13. Sidebars
 
 A sidebar is a named list of items. An item is either sanitized HTML or a
 links block with an optional header and one or two columns. Refer to a
 sidebar by id or name. The two built-in sidebars (`special: true`) cannot
-be renamed or deleted. Detail output includes `used_by`, the slugs of
-pages using the sidebar.
+be renamed or deleted. Detail output includes `used_by`, the slugs of up
+to 500 pages using the sidebar, and `used_by_count`, the real total.
 
 ```bash
 geekcli sidebars list
@@ -377,6 +424,8 @@ Attach a sidebar to a page with `geekcli pages update <ref> --sidebar
 <id or name>` (`--sidebar null` detaches). `set-items` keeps items whose
 ids you include; ids are stable across `move-item` and `add-* --at`.
 
+API reference: [Sidebars](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#sidebars).
+
 ## 14. Footers
 
 Footers are shared HTML blocks shown in the footer's third column. Footer 1
@@ -389,7 +438,13 @@ geekcli footers update 1 --content-file footer.html
 geekcli footers create --content-file alt-footer.md          # Markdown converts
 geekcli pages update /buying/ --footer 2                     # attach; `--footer null` for the default
 geekcli footers delete 2 --force
+geekcli footers revisions 1 --limit 5                          # and `revision`, `revert` (§9)
 ```
+
+`footers get` shows `used_by`, the slugs of up to 500 pages that use the
+footer, and `used_by_count`, the real total.
+
+API reference: [Footers](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#footers).
 
 ## 15. Featured Pages tiles and landscape images
 
@@ -437,6 +492,8 @@ Things learned on a real site:
 - The tile block sits between the home content and the listings strip; the
   home content above it should be short.
 
+API reference: [Featured pages](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#featured-pages).
+
 ## 16. Search form and listings options on pages
 
 Content pages, area pages and the home page all take:
@@ -480,6 +537,8 @@ a violating change with exit code 5 and names the field. Changes take
 effect on the live site within a few seconds and are recorded in the
 site's settings history.
 
+API reference: [Site settings](https://developers.realgeeks.com/content-api/design-settings-files/#site-settings).
+
 ## 18. Design: template and colours
 
 A site's look is a **template** (design family: `miranda`, `miranda-thin`,
@@ -513,6 +572,8 @@ to, so it works against a local or staging site as well as the live domain. Cont
 on anna-modern, a right-hand sidebar on molly), so after a real change
 snapshot the home page, a content page and a post.
 
+API reference: [Design](https://developers.realgeeks.com/content-api/design-settings-files/#design).
+
 ## 19. Files
 
 The site's uploaded files (the admin's Manage Files page), served from
@@ -526,6 +587,7 @@ geekcli files get images/logo.png
 geekcli files url images/logo.png        # just the public URL
 geekcli files upload hero.jpg team.jpg --to images
 geekcli files upload hero.jpg --to images --name hero-2026.jpg --overwrite
+geekcli files upload --from-url https://u.realgeeks.media/<site>/images/logo.png --to images/2026
 geekcli files mkdir images/2026
 geekcli files move images/hero.jpg images/2026/hero.jpg
 geekcli files delete images/2026         # a folder goes with everything in it
@@ -544,10 +606,25 @@ Uploading with `--overwrite` keeps the same URL, and the CDN may keep
 serving the old file for a long time; to replace a live image, upload it
 under a new name and repoint whatever uses it.
 
+`--from-url` has the site fetch the file itself instead of uploading a local
+one. It takes https URLs on the hosts the API allows: `u.realgeeks.media`
+(to copy a file that is already uploaded) and the file CDNs of AI platforms
+such as ChatGPT, Grok and Perplexity, so an agent can store an image it
+generated without downloading it first. Any other host is a validation
+error (exit 5) that names the allowed hosts. The stored name defaults to the
+URL's last segment; AI-platform URLs rarely end in a file name, so pass
+`--name` with the right extension.
+
+Deleting a folder removes its files from storage first; if storage refuses
+some of them the call fails (exit 1) and those files stay listed, so run the
+same delete again.
+
 `-q` on `upload`, `get` and `url` prints only the public URL, which is
 what to put in `--facebook-image`, in `<img src>` inside content, and in
 file-typed settings such as `HEADER_LOGO` and `FAVICON`. Listings include
 `dimensions` for images and a `thumbnail_url`.
+
+API reference: [Files](https://developers.realgeeks.com/content-api/design-settings-files/#files).
 
 ## 20. Snapshots (visual check)
 
@@ -812,6 +889,8 @@ geekcli api DELETE blog/categories/3/ -p force=true
 `geekcli api` sends the request as-is and prints the JSON response, so any
 endpoint the typed commands do not cover is still reachable.
 
+API reference: [the full Content API](https://developers.realgeeks.com/content-api/), [changelog](https://developers.realgeeks.com/content-api/changelog/).
+
 ## 26. Recommended agent workflow
 
 1. `geekcli me --json` to confirm the site and scopes before writing.
@@ -824,9 +903,13 @@ endpoint the typed commands do not cover is still reachable.
 5. On exit code 5, read `error.fields` and fix the named fields. On a
    settings batch, fix or drop the named setting and resend the rest.
 6. Prefer `update` with specific flags over `--replace`.
-7. Before a large rewrite of a page, note `pages revisions <ref> --limit 1`; a bad result is one `pages revert` away.
+7. Before a large rewrite of a page, area page, post or footer, note
+   `<command> revisions <ref> --limit 1`; a bad result is one `revert` away.
 8. After changing anything visible, `geekcli snapshot <path> --full`
    and look at the image. Check `--mobile` too when layout changed.
 9. `geekcli guide <topic>` pulls one section of this guide (for
    example `guide html`, `guide rebrand`, `guide search`); `guide --list`
    shows the topics.
+10. When the API can do something the CLI has no flag for, check the
+    [API changelog](https://developers.realgeeks.com/content-api/changelog/)
+    and reach it with `geekcli api` (§25).
