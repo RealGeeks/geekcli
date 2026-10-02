@@ -72,7 +72,7 @@ impl Payload {
         };
         let value: Value = serde_json::from_str(&text)?;
         let Value::Object(map) = value else {
-            return Err(Error::Usage("--json must be a JSON object".into()));
+            return Err(Error::Usage("--data must be a JSON object".into()));
         };
         for (k, v) in map {
             self.0.entry(k).or_insert(v);
@@ -279,7 +279,9 @@ mod tests {
     #[test]
     fn json_must_be_object() {
         let mut p = Payload::default();
-        assert!(matches!(p.merge_json(Some("[1]")), Err(Error::Usage(_))));
+        assert!(
+            matches!(p.merge_json(Some("[1]")), Err(Error::Usage(m)) if m == "--data must be a JSON object")
+        );
         assert!(matches!(p.merge_json(Some("{nope")), Err(Error::Usage(_))));
     }
 

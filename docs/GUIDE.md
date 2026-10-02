@@ -165,6 +165,11 @@ Notes:
   validation error unless `--create-categories` is given.
 - `--publish` in the future makes the post `scheduled`; `state` in the
   response is `draft`, `scheduled` or `published`.
+- `state` is the field that reflects visibility; `status` alone does not
+  (a `published` post with a future publish date is `scheduled`). Drafts
+  and scheduled posts are hidden from the blog index, feed and sitemap,
+  and that is all post status promises: do not rely on it to keep content
+  confidential, and do not put anything in a draft that must not be seen.
 - `--replace` on `update` sends PUT: omitted optional fields reset.
 
 API reference: [Blog posts](https://developers.realgeeks.com/content-api/blog-posts/#blog-posts).
@@ -302,7 +307,17 @@ API reference: [Revisions and undo](https://developers.realgeeks.com/content-api
 ```bash
 geekcli home-page get
 geekcli home-page update --search-header "Find your next home" --content-file home.html
+geekcli home-page update --page-heading "Jupiter Homes for Sale"   # same field, alias
+geekcli home-page update --search-image https://u.realgeeks.media/<site>/images/badge.png
 ```
+
+- `--search-header` (alias `--page-heading`, also on content and area
+  pages) is the page's main hero heading, not a small label over the form.
+  When it is unset the site shows the `BIG_SEARCH_TITLE` setting ("Real
+  Estate Search"), so set it, ideally to the page's target keyword.
+- The hero background is the page's `--landscape` (§15), or the sitewide
+  `HEADER_IMAGE` setting when the page has none. `--search-image` is not a
+  background: it renders as an image, logo-style, inside the hero.
 
 API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
 
@@ -441,6 +456,18 @@ geekcli footers delete 2 --force
 geekcli footers revisions 1 --limit 5                          # and `revision`, `revert` (§9)
 ```
 
+An agent block is the usual footer: name, address, phone, licence and
+social icons (HTML rules in §21):
+
+```html
+<p><strong>Jordan Avery</strong><br>Example Realty<br>
+123 Main St, Springfield, ST 00000<br>
+<a href="tel:+15555550123">(555) 555-0123</a><br>License #0000000</p>
+<p><a href="https://facebook.com/example"><em class="fa-brands fa-facebook"></em></a>
+<a href="https://instagram.com/example"><em class="fa-brands fa-instagram"></em></a>
+<a href="https://linkedin.com/in/example"><em class="fa-brands fa-linkedin"></em></a></p>
+```
+
 `footers get` shows `used_by`, the slugs of up to 500 pages that use the
 footer, and `used_by_count`, the real total.
 
@@ -508,7 +535,8 @@ geekcli pages update /buying/ --listing-header "Homes in Jupiter" --number-of-pr
 `--number-of-properties` must be one of 0, 3, 5, 6, 10, 12, 15, 20, 24, 25,
 30, 40, 50, 60, 75, 100 or 120. The home page adds
 `--property-display-type carousel|grid|null`, `--search-form-tabs true|false`
-and `--search-image <file URL>|null`. Some of these render only on certain
+and `--search-image <file URL>|null` (an image in the hero, not its
+background; §10). Some of these render only on certain
 designs (display type and tabs are anna-modern features); the API accepts
 them everywhere, as the admin does.
 
@@ -526,7 +554,11 @@ geekcli settings set EMAIL_FROM_NAME="Jordan Avery" LEAD_CAPTURE_ON_PROPERTY=2
 geekcli settings set GA4_MEASUREMENT_ID="G-AAA,G-BBB" # lists take comma-separated values
 geekcli settings set --data '{"SOME_OBJECT_SETTING": {"k": 1}}'
 geekcli settings clear GOOGLE_ANALYTICS_KEY           # back to the inherited default
+geekcli settings set HEADER_LOGO="$(geekcli files upload logo.png --to images -q)"
 ```
+
+`HEADER_LOGO` is the header logo. Set it, like every file setting, to a
+URL from `files upload -q`; an external URL may not render.
 
 `set` reads each setting's definition first and converts your text to its
 type (`boolean`, `integer`, `integer_list`, `list`, `choice`, `object`,
@@ -649,8 +681,11 @@ geekcli snapshot / --selector ".card" --nth 2 --out third-card.png
 ```
 
 Output is `{"path", "url", "width", "height", "full", "bytes", "browser"}`;
-`-q` prints just the file path. Only public pages render: a draft post
-404s for the browser, so snapshot it after publishing. After a content
+`-q` prints just the file path. Snapshot a post after publishing it.
+Drafts and scheduled posts are kept out of the blog index, feed and
+sitemap, but what a browser gets when it asks for one directly is not
+guaranteed, so do not rely on post status to keep content confidential
+(§5). After a content
 change, snapshot the page and look at it before moving on; unstyled
 markup (a class the theme does not know), overflow on a phone, or a
 character the database could not store are invisible in the API response

@@ -942,3 +942,54 @@ fn featured_group_tiles_and_home_page_attach() {
         .success();
     area.assert();
 }
+
+#[test]
+fn page_heading_is_an_alias_for_search_header() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let home = server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(
+            json!({"search_header": "Jupiter Homes for Sale"}),
+        ))
+        .with_body(r#"{"id":1,"url":"https://x/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "home-page",
+            "update",
+            "--page-heading",
+            "Jupiter Homes for Sale",
+        ])
+        .assert()
+        .success();
+    home.assert();
+
+    server
+        .mock("GET", "/api/v3/content/pages/7/")
+        .with_body(r#"{"id":7,"path":"/buying/"}"#)
+        .create();
+    let page = server
+        .mock("PATCH", "/api/v3/content/pages/7/")
+        .match_body(Matcher::Json(json!({"search_header": "Buying in Jupiter"})))
+        .with_body(r#"{"id":7,"path":"/buying/","url":"https://x/buying/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "pages",
+            "update",
+            "7",
+            "--page-heading",
+            "Buying in Jupiter",
+        ])
+        .assert()
+        .success();
+    page.assert();
+
+    cmd(&server, &dir)
+        .args(["pages", "update", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("page-heading"))
+        .stdout(predicate::str::contains("BIG_SEARCH_TITLE"));
+}

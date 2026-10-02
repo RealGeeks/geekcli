@@ -37,6 +37,7 @@ pub enum SettingsSub {
     #[command(after_help = "Notes:
   - A batch with one invalid setting is rejected whole; fix or drop the named one and resend the rest.
   - Some settings exist only on certain designs (TAGLINE, HEADER_IMAGE_ALT, MOBILE_HEADER_LOGO): the error names the TEMPLATE values that allow them.
+  - HEADER_LOGO is the header logo: set it to a URL from `files upload -q`; an external URL may not render. The same goes for other file settings.
   - File settings take a URL, normally one from `files upload -q`; a stored value with a server path in front of https:// is corrupt and the bare URL fixes it.
   - TEMPLATE is not a setting: change the design with `geekcli design set --template ...`.")]
     Set(SetArgs),
