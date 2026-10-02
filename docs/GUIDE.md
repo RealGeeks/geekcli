@@ -144,6 +144,14 @@ Every resource has a numeric `id`. Commands also accept human references:
 
 A slug that matches more than one page is an error; use the id or path.
 
+**Body content.** Every command that takes HTML (posts, pages, area-pages,
+agent-pages, home-page, blog, footers, sidebars `add-html`/`update-item`)
+accepts `--content` / `--content-file`; use those everywhere.
+`--body`/`--body-file` (the API's field name for posts) and
+`--html`/`--html-file` (its name for sidebar items) work too, as aliases. A file
+may be `-` for stdin; add `--markdown` (or use a `.md` file) to convert
+Markdown to HTML.
+
 ## 5. Blog posts
 
 ```bash
@@ -155,7 +163,7 @@ geekcli posts get spring-market-update
 geekcli posts create \
   --title "Spring market update" \
   --slug spring-market-update \
-  --body-file post.md \
+  --content-file post.md \
   --category market-updates --create-categories \
   --meta-description "Inventory is up across the metro."
 
@@ -171,7 +179,7 @@ geekcli posts unpublish 42
 geekcli posts delete 42
 ```
 
-Field flags: `--title --slug --body --body-file --markdown --status
+Field flags: `--title --slug --content --content-file --markdown --status
 --publish --category --create-categories --page-title --meta-description
 --meta-keywords --facebook-image --allow-comments --nofollow-comments
 --data`. `--data` takes a JSON object (inline, `@file`, or `-` for stdin)
@@ -179,7 +187,7 @@ for anything without a flag; explicit flags win over `--data`.
 
 Notes:
 
-- `--body-file x.md` (or `--markdown`) converts Markdown to HTML before
+- `--content-file x.md` (or `--markdown`) converts Markdown to HTML before
   sending. Raw HTML inside Markdown passes through.
 - Put `<!--read more-->` in the body where the summary should end. It
   survives Markdown conversion and server-side sanitization.
@@ -535,11 +543,11 @@ to 500 pages using the sidebar, and `used_by_count`, the real total.
 geekcli sidebars list
 geekcli sidebars get "Blog Sidebar"
 geekcli sidebars create --name "Luxury Sidebar"
-geekcli sidebars add-html "Luxury Sidebar" --html-file card.md          # Markdown converts
+geekcli sidebars add-html "Luxury Sidebar" --content-file card.md         # Markdown converts
 geekcli sidebars add-links "Luxury Sidebar" --header "Featured Areas" --header-url /areas/ \
     --link "Riverside=/riverside/" --link "Fairview=/fairview/" --columns 2
 geekcli sidebars update-item 5 51 --link "Riverside=/riverside/" --link "Millbrook=/millbrook/"
-geekcli sidebars update-item 5 50 --html "<p>New card</p>"
+geekcli sidebars update-item 5 50 --content "<p>New card</p>"
 geekcli sidebars move-item 5 51 --to 0
 geekcli sidebars remove-item 5 50
 geekcli sidebars set-items 5 --data @items.json                         # replace all
