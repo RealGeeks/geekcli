@@ -117,7 +117,10 @@ impl Config {
         let written = write_private(&tmp, raw.as_bytes()).and_then(|()| fs::rename(&tmp, path));
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
-            return Err(Error::Config(format!("cannot write {}: {e}", path.display())));
+            return Err(Error::Config(format!(
+                "cannot write {}: {e}",
+                path.display()
+            )));
         }
         Ok(())
     }
@@ -252,10 +255,7 @@ pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> 
         .or_else(|| stored_base.clone())
         .unwrap_or_else(|| format!("https://{domain}"));
     check_transport(&base_url)?;
-    let override_key = overrides
-        .api_key
-        .clone()
-        .filter(|k| !k.trim().is_empty());
+    let override_key = overrides.api_key.clone().filter(|k| !k.trim().is_empty());
     // A stored key only goes to the server it was stored for. A --base-url or
     // a GEEKCLI_BASE_URL left over in the shell must bring its own key.
     if let (None, Some(_), Some(base)) = (&override_key, stored, &overrides.base_url) {
@@ -355,7 +355,9 @@ mod tests {
             ..elsewhere
         };
         assert_eq!(
-            resolve_target(&config, &with_key).ok().and_then(|t| t.api_key),
+            resolve_target(&config, &with_key)
+                .ok()
+                .and_then(|t| t.api_key),
             Some("rg_live_staging".into())
         );
 
@@ -396,7 +398,9 @@ mod tests {
 
         let fresh = base.path().join("new/geekcli/config.toml");
         assert!(Config::default().save_to(&fresh).is_ok());
-        let dir_mode = fs::metadata(base.path().join("new/geekcli"))?.permissions().mode();
+        let dir_mode = fs::metadata(base.path().join("new/geekcli"))?
+            .permissions()
+            .mode();
         assert_eq!(dir_mode & 0o777, 0o700);
         Ok(())
     }
