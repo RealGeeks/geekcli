@@ -125,11 +125,11 @@ pub fn run(ctx: &Context, cmd: FilesCommand) -> Result<()> {
             all,
         ),
         FilesSub::Get { path } => {
-            let entry = ctx.client.get(&detail_path(&path), &Query::new())?.body;
+            let entry = ctx.client.get(&detail_path(&path)?, &Query::new())?.body;
             print_entry(ctx, &entry)
         }
         FilesSub::Url { path } => {
-            let entry = ctx.client.get(&detail_path(&path), &Query::new())?.body;
+            let entry = ctx.client.get(&detail_path(&path)?, &Query::new())?.body;
             let url = entry.get("url").and_then(Value::as_str).unwrap_or("");
             println!("{url}");
             Ok(())
@@ -168,7 +168,7 @@ pub fn run(ctx: &Context, cmd: FilesCommand) -> Result<()> {
             )? {
                 return Err(Error::Usage("cancelled".into()));
             }
-            ctx.client.delete(&detail_path(&path), &Query::new())?;
+            ctx.client.delete(&detail_path(&path)?, &Query::new())?;
             ctx.printer.note(&format!("Deleted {path}"));
             if ctx.printer.format != Format::Table {
                 ctx.printer.raw(&json!({ "deleted": true, "path": path }))?;
@@ -183,17 +183,25 @@ pub fn normalize(path: &str) -> String {
     path.trim().trim_matches('/').to_string()
 }
 
-fn detail_path(path: &str) -> String {
+/// `files/<path>/` with each segment percent-encoded. `.`, `..` and empty
+/// segments are refused: the URL parser would resolve them, turning a file
+/// path into a request for some other API endpoint.
+fn detail_path(path: &str) -> Result<String> {
     let path = normalize(path);
-    let encoded: Vec<String> = path
-        .split('/')
-        .map(|seg| {
+    let mut encoded = Vec::new();
+    for seg in path.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err(Error::Usage(format!(
+                "invalid file path '{path}': use a plain path like images/logo.png"
+            )));
+        }
+        encoded.push(
             url::form_urlencoded::byte_serialize(seg.as_bytes())
                 .collect::<String>()
-                .replace('+', "%20")
-        })
-        .collect();
-    format!("{PATH}{}/", encoded.join("/"))
+                .replace('+', "%20"),
+        );
+    }
+    Ok(format!("{PATH}{}/", encoded.join("/")))
 }
 
 /// `images/2026` → (`images`, `2026`); `logo.png` → (``, `logo.png`).
@@ -439,10 +447,7 @@ mod tests {
             url_file_name("https://u.realgeeks.media/site/docs/guide.pdf/").as_deref(),
             Some("guide.pdf")
         );
-        assert_eq!(
-            url_file_name("https://cdn.example.net/file-abc123"),
-            None
-        );
+        assert_eq!(url_file_name("https://cdn.example.net/file-abc123"), None);
         assert_eq!(url_file_name("https://example.com/"), None);
         assert_eq!(url_file_name("not a url"), None);
     }
@@ -459,9 +464,12 @@ mod tests {
         );
         assert!(split_path("/").is_err());
         assert_eq!(
-            detail_path("images/my logo.png"),
-            "files/images/my%20logo.png/"
+            detail_path("images/my logo.png").ok().as_deref(),
+            Some("files/images/my%20logo.png/")
         );
+        for bad in ["../blog/posts/5", "images/../../me", "./x", "a//b", ""] {
+            assert!(detail_path(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

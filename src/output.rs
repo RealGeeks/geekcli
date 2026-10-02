@@ -98,7 +98,7 @@ impl Printer {
     /// parseable. Goes to stderr.
     pub fn note(&self, text: &str) {
         if self.format == Format::Table {
-            eprintln!("{text}");
+            eprintln!("{}", sanitize(text));
         }
     }
 }
@@ -219,10 +219,19 @@ fn flatten(prefix: &str, value: &Value, rows: &mut Vec<(String, String)>) {
 }
 
 /// Render a JSON value as a table cell.
+/// Drop control characters (keeping newlines and tabs) from text bound for a
+/// terminal: site content must not be able to send escape sequences that
+/// rewrite the screen, the window title or the clipboard.
+pub fn sanitize(text: &str) -> String {
+    text.chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect()
+}
+
 pub fn cell(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
-        Value::String(s) => s.clone(),
+        Value::String(s) => sanitize(s),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::Array(items) => items
@@ -283,11 +292,11 @@ pub fn print_error(err: &Error, format: Format) {
             eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
         }
         Format::Table => {
-            eprintln!("error: {err}");
+            eprintln!("error: {}", sanitize(&err.to_string()));
             if let Some(fields) = err.fields() {
                 for (name, messages) in fields {
                     for message in messages {
-                        eprintln!("  {name}: {message}");
+                        eprintln!("  {}: {}", sanitize(name), sanitize(message));
                     }
                 }
             }
@@ -304,6 +313,12 @@ pub fn print_error(err: &Error, format: Format) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_terminal_escapes_from_cells() {
+        let title = Value::String("Hi\u{1b}]0;PWNED\u{7}\u{1b}[31m red\u{9b}2J\nnext\tcol".into());
+        assert_eq!(cell(&title), "Hi]0;PWNED[31m red2J\nnext\tcol");
+    }
     use serde_json::json;
 
     #[test]

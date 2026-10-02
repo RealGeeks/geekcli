@@ -98,13 +98,7 @@ pub fn run(ctx: &Context, cmd: SettingsCommand) -> Result<()> {
             ctx.printer.list(&rows, None, COLUMNS)
         }
         SettingsSub::Get { name } => {
-            let setting = ctx
-                .client
-                .get(
-                    &format!("{PATH}{}/", name.trim().to_ascii_uppercase()),
-                    &Query::new(),
-                )?
-                .body;
+            let setting = ctx.client.get(&setting_path(&name)?, &Query::new())?.body;
             ctx.printer.raw(&setting)
         }
         SettingsSub::Groups => {
@@ -121,10 +115,7 @@ pub fn run(ctx: &Context, cmd: SettingsCommand) -> Result<()> {
                     return Err(Error::Usage(format!("expected NAME=value, got '{pair}'")));
                 };
                 let name = name.trim().to_ascii_uppercase();
-                let definition = ctx
-                    .client
-                    .get(&format!("{PATH}{name}/"), &Query::new())?
-                    .body;
+                let definition = ctx.client.get(&setting_path(&name)?, &Query::new())?.body;
                 body.insert(name, coerce(raw.trim(), &definition)?);
             }
             if let Some(source) = &args.data {
@@ -158,6 +149,22 @@ pub fn run(ctx: &Context, cmd: SettingsCommand) -> Result<()> {
             apply(ctx, &Value::Object(body))
         }
     }
+}
+
+/// `settings/<NAME>/`. Setting names are upper-case letters, digits and
+/// underscores; anything else is refused before it reaches a URL.
+fn setting_path(name: &str) -> Result<String> {
+    let name = name.trim().to_ascii_uppercase();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(Error::Usage(format!(
+            "'{name}' is not a setting name; `geekcli settings list` shows them"
+        )));
+    }
+    Ok(format!("{PATH}{name}/"))
 }
 
 fn all(ctx: &Context) -> Result<Vec<Value>> {
@@ -266,6 +273,17 @@ pub fn coerce(raw: &str, definition: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setting_names_cannot_leave_the_settings_path() {
+        assert_eq!(
+            setting_path(" header_logo ").ok().as_deref(),
+            Some("settings/HEADER_LOGO/")
+        );
+        for bad in ["../../../../admin", "A/B", "X?y=1", "", "LOGO%2F"] {
+            assert!(setting_path(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn coerces_by_type() {
