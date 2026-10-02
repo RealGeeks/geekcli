@@ -10,7 +10,7 @@ use crate::commands::{
     Context,
 };
 use crate::config::{self, Config, Overrides};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::output::{Format, Printer};
 
 const ABOUT: &str = "The Real Geeks command line: manage a Real Geeks website's content.";
@@ -179,7 +179,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 printer,
                 yes: cli.global.yes,
             };
-            match command {
+            let result = match command {
                 Command::Me => auth::status(&ctx),
                 Command::Posts(cmd) => posts::run(&ctx, cmd),
                 Command::Categories(cmd) => categories::run(&ctx, cmd),
@@ -202,8 +202,20 @@ pub fn run(cli: Cli) -> Result<()> {
                 Command::Inspect(args) => inspect::run(&ctx, &args),
                 Command::Api(args) => api::run(&ctx, &args),
                 Command::Guide(_) | Command::Completions { .. } | Command::Auth(_) => Ok(()),
-            }
+            };
+            result.map_err(|err| with_refresh_hint(err, &config, &overrides))
         }
+    }
+}
+
+/// A `--site` that matched no stored key may be the live domain of a site
+/// stored before aliases were recorded; say how to record them.
+pub fn with_refresh_hint(err: Error, config: &Config, overrides: &Overrides) -> Error {
+    match (&err, overrides.site.as_deref()) {
+        (Error::NotLoggedIn(_), Some(site)) if overrides.api_key.is_none() => {
+            config.refresh_hint(site).map_or(err, Error::NotLoggedIn)
+        }
+        _ => err,
     }
 }
 
