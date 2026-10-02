@@ -29,6 +29,9 @@ Options (flag or environment):
 USAGE
 }
 
+# Everything runs from main, called on the last line, so a download cut off
+# part-way through executes nothing.
+main() {
 REPO="${GEEKCLI_REPO:-realgeeks/geekcli}"
 VERSION="${GEEKCLI_VERSION:-}"
 INSTALL_DIR="${GEEKCLI_INSTALL_DIR:-}"
@@ -58,7 +61,7 @@ os=$(uname -s)
 arch=$(uname -m)
 case "$os" in
   Darwin) os_part="apple-darwin" ;;
-  Linux) os_part="unknown-linux-gnu" ;;
+  Linux) os_part="unknown-linux-musl" ;; # static: runs whatever the glibc
   MINGW*|MSYS*|CYGWIN*) die "on Windows run install.ps1 instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
   *) die "unsupported OS: $os" ;;
 esac
@@ -77,9 +80,9 @@ fi
 api() {
   # $1: API URL. Prints the body.
   if [ -n "$auth_header" ]; then
-    curl -fsSL -H "$auth_header" -H "Accept: application/vnd.github+json" "$1"
+    curl --proto =https --tlsv1.2 -fsSL -H "$auth_header" -H "Accept: application/vnd.github+json" "$1"
   else
-    curl -fsSL -H "Accept: application/vnd.github+json" "$1"
+    curl --proto =https --tlsv1.2 -fsSL -H "Accept: application/vnd.github+json" "$1"
   fi
 }
 
@@ -93,6 +96,12 @@ fi
 release_json=$(api "$release_url") || die "cannot read the release ($release_url). If GitHub is rate limiting you, set GH_TOKEN."
 tag=$(printf '%s' "$release_json" | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
 [ -n "$tag" ] || die "no tag_name in the release response"
+
+# Releases before v0.6.0 shipped glibc-linked Linux archives instead.
+if [ "$os_part" = "unknown-linux-musl" ] &&
+  ! printf '%s' "$release_json" | grep -q "\"name\": *\"geekcli-$tag-$target.tar.gz\""; then
+  target="$arch_part-unknown-linux-gnu"
+fi
 
 name="geekcli-$tag-$target"
 archive="$name.tar.gz"
@@ -108,9 +117,9 @@ fetch_asset() {
   if [ -n "$auth_header" ]; then
     url=$(asset_api_url "$1")
     [ -n "$url" ] || die "release $tag has no asset $1"
-    curl -fsSL -H "$auth_header" -H "Accept: application/octet-stream" -o "$2" "$url"
+    curl --proto =https --tlsv1.2 -fsSL -H "$auth_header" -H "Accept: application/octet-stream" -o "$2" "$url"
   else
-    curl -fsSL -o "$2" "https://github.com/$REPO/releases/download/$tag/$1"
+    curl --proto =https --tlsv1.2 -fsSL -o "$2" "https://github.com/$REPO/releases/download/$tag/$1"
   fi
 }
 
@@ -148,3 +157,6 @@ case ":$PATH:" in
   *) say "Add it to your PATH:  export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
 say "Next: geekcli auth login --site www.yoursite.com   (then: geekcli guide)"
+}
+
+main "$@"

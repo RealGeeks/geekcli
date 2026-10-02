@@ -1,5 +1,11 @@
 # geekcli
 
+[![CI](https://github.com/RealGeeks/geekcli/actions/workflows/ci.yml/badge.svg)](https://github.com/RealGeeks/geekcli/actions/workflows/ci.yml)
+[![Quality](https://github.com/RealGeeks/geekcli/actions/workflows/quality.yml/badge.svg)](https://github.com/RealGeeks/geekcli/actions/workflows/quality.yml)
+[![Release](https://img.shields.io/github/v/release/RealGeeks/geekcli)](https://github.com/RealGeeks/geekcli/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MSRV 1.88](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
+
 The Real Geeks command line. `geekcli` manages a Real Geeks website: blog
 posts and categories, content, area and agent pages, the home page,
 navigation, sidebars, footers, settings, design and uploaded files. It is
@@ -10,6 +16,9 @@ guide written for agents.
 It is a client for the Real Geeks Content API, documented at
 <https://developers.realgeeks.com/content-api/>. The API is switched on per
 site; site owners can [request access](https://developers.realgeeks.com/request-api-access/).
+
+**Status:** pre-1.0 and under active development alongside the Content API
+beta. Breaking changes are called out in the [changelog](CHANGELOG.md).
 
 ```bash
 geekcli auth login --site www.example.com
@@ -41,7 +50,7 @@ irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex
 ```
 
 The scripts pick the archive for your platform from the latest
-[GitHub release](https://github.com/realgeeks/geekcli/releases), verify its
+[GitHub release](https://github.com/RealGeeks/geekcli/releases), verify its
 sha256, and install `geekcli` (`/usr/local/bin` or `~/.local/bin`;
 `%LOCALAPPDATA%\Programs\geekcli` on Windows, added to your PATH).
 
@@ -53,13 +62,21 @@ Run the script as a file and `--version v0.3.0` / `-Version v0.3.0` work as
 usual; piped, use `| sh -s -- --version v0.3.0` or, in PowerShell,
 `& ([scriptblock]::Create((irm $url))) -Version v0.3.0`.
 
-Archives are built for macOS (Apple silicon, Intel), Linux (x86_64, arm64) and
-Windows (x86_64), each with a `.sha256` beside it, so any download works too.
+Archives are built for macOS (Apple silicon, Intel), Linux (x86_64, arm64;
+static binaries that run on any distribution, Alpine included) and Windows
+(x86_64), each with a `.sha256` beside it, so any download works too. Every
+archive also carries a signed build-provenance attestation; check that a
+download was built from this repository with
+`gh attestation verify <archive> --repo RealGeeks/geekcli`.
+
+To uninstall, delete the `geekcli` binary and, if you no longer want the
+stored keys, `~/.config/geekcli/` (revoke the keys under **Admin → API keys**
+on each site too).
 
 Or from source (needs a Rust toolchain):
 
 ```bash
-cargo install --git https://github.com/realgeeks/geekcli   # or: cargo install --path .
+cargo install --locked --git https://github.com/RealGeeks/geekcli   # or: cargo install --locked --path .
 ```
 
 ## Authentication
@@ -84,8 +101,7 @@ which implies the read scopes; pass `--scope blog:write` to narrow it).
 A key created by hand under **Admin → API keys** works too:
 
 ```bash
-geekcli auth login --site www.example.com --api-key rg_live_...
-# or read it from stdin so it never lands in shell history
+# read from stdin so the key stays out of shell history and the process list
 pbpaste | geekcli auth login --site www.example.com --api-key-stdin
 ```
 
@@ -214,6 +230,16 @@ Releases are cut by release-please from the conventional commit history:
 merging the open "chore(main): release" PR tags a version, and the Release
 workflow builds the archives and attaches them to the GitHub release.
 
+## Support
+
+- Questions about a Real Geeks website or account:
+  [Real Geeks support](https://support.realgeeks.com/).
+- Bugs and feature requests for the CLI:
+  [GitHub issues](https://github.com/RealGeeks/geekcli/issues).
+- Security problems: [private reporting](SECURITY.md), never a public issue.
+- Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Release archives include
+`THIRD_PARTY_LICENSES.html` for the open-source crates built into the binary.

@@ -28,8 +28,9 @@ The scripts verify the release checksum; `geekcli --version` confirms it.
 # Approve, and the key is minted and stored. No secrets in the CLI.
 geekcli auth login --site www.example.com
 
-# Or store a key that a site owner created under Admin → API keys
-geekcli auth login --site www.example.com --api-key rg_live_...
+# Or store a key that a site owner created under Admin → API keys, read
+# from stdin so it stays out of shell history and the process list
+pbpaste | geekcli auth login --site www.example.com --api-key-stdin
 
 # Confirm the key, its scopes and the site
 geekcli me
@@ -64,6 +65,15 @@ run in CI or inside an agent sandbox:
 | `GEEKCLI_CONFIG_DIR` | where `config.toml` lives                         |
 
 Precedence: flags, then environment, then the config file.
+
+Keys only travel over https. Plain `http://` base URLs are refused except
+for local dev hosts (`localhost`, loopback addresses, `*.localhost`,
+`*.local`, `*.test`). A stored key is only sent to the server it was stored
+for: with `--base-url` (or `GEEKCLI_BASE_URL`) pointing anywhere else, pass
+that server's key with `--api-key-stdin`, `--api-key` or `GEEKCLI_API_KEY`.
+The CLI never follows a redirect to another origin with the key, and never
+sends it to a full URL off the site (`geekcli api GET https://elsewhere/`
+is refused).
 
 Shell completion: `geekcli completions zsh` (or bash, fish, powershell)
 prints a script to source from your shell profile.
@@ -634,6 +644,12 @@ Brave, Edge or Playwright's Chromium, or use `--browser` /
 the whole document while the viewport stays a normal size (a hero sized
 to the viewport stays one screen tall), and the page is scrolled once
 before capture so lazy-loaded images render.
+
+Each run starts a fresh, sandboxed browser profile with no cookies or
+logins, and certificate errors fail the load. While it runs, Chrome's
+DevTools port listens on localhost, so on a machine shared with untrusted
+local users prefer running `snapshot` and `inspect` in your own container
+or VM.
 
 ```bash
 geekcli snapshot                                 # first screen of the home page → snapshot-home.png
