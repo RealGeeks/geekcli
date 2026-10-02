@@ -32,6 +32,7 @@ pub const DETAIL_COLUMNS: &[Column] = &[
     col("anchor_text", "/anchor_text"),
     col("title", "/title"),
     col("template", "/template"),
+    col("content", "/content"),
     col("parent", "/parent"),
     col("level", "/level"),
     col("children", "/children_count"),
@@ -435,7 +436,7 @@ pub fn run(ctx: &Context, cmd: PagesCommand) -> Result<()> {
             print_written(ctx, &created, DETAIL_COLUMNS, "Created")
         }
         PagesSub::Update(args) => {
-            let id = id_of(&resolve(ctx, PATH, &args.reference, "page")?)?;
+            let id = resolve_id(ctx, PATH, &args.reference, "page")?;
             let mut payload = args.fields.payload(ctx, PATH)?;
             payload.set("template", args.template.as_deref());
             write(
@@ -458,15 +459,15 @@ pub fn run(ctx: &Context, cmd: PagesCommand) -> Result<()> {
         ),
         PagesSub::Search { reference } => page_search(ctx, PATH, &reference, "page"),
         PagesSub::Revisions { reference, limit } => {
-            let id = id_of(&resolve(ctx, PATH, &reference, "page")?)?;
+            let id = resolve_id(ctx, PATH, &reference, "page")?;
             super::revisions::list(ctx, &detail_path(PATH, id), limit)
         }
         PagesSub::Revision { reference, rev } => {
-            let id = id_of(&resolve(ctx, PATH, &reference, "page")?)?;
+            let id = resolve_id(ctx, PATH, &reference, "page")?;
             super::revisions::show(ctx, &detail_path(PATH, id), rev)
         }
         PagesSub::Revert { reference, rev } => {
-            let page = resolve(ctx, PATH, &reference, "page")?;
+            let page = find(ctx, PATH, &reference, "page")?;
             let id = id_of(&page)?;
             let label = format!(
                 "page {}",
@@ -479,7 +480,7 @@ pub fn run(ctx: &Context, cmd: PagesCommand) -> Result<()> {
 
 /// Describe the saved search a page displays, with its live match count.
 pub fn page_search(ctx: &Context, resource_path: &str, reference: &str, label: &str) -> Result<()> {
-    let page = resolve(ctx, resource_path, reference, label)?;
+    let page = find(ctx, resource_path, reference, label)?;
     let search_id = page
         .pointer("/search/id")
         .and_then(Value::as_u64)
@@ -544,7 +545,7 @@ pub fn delete(
     label: &str,
     flag: Option<&str>,
 ) -> Result<()> {
-    let page = resolve(ctx, resource_path, reference, label)?;
+    let page = find(ctx, resource_path, reference, label)?;
     let id = id_of(&page)?;
     let path = page.get("path").and_then(Value::as_str).unwrap_or("");
     if !confirm(ctx, &format!("{label} {id} ({path})"))? {
@@ -562,8 +563,35 @@ pub fn delete(
     Ok(())
 }
 
-/// A page by id, `/path/`, or slug.
+/// The full record of a page given by id, `/path/`, or slug. List rows
+/// leave out `content`, `extra_content` and `agents`, so a path or slug is
+/// looked up on the list and then fetched from the detail endpoint.
 pub fn resolve(ctx: &Context, resource_path: &str, reference: &str, label: &str) -> Result<Value> {
+    let reference = reference.trim();
+    let id = match reference.parse::<u64>() {
+        Ok(id) => id,
+        Err(_) => id_of(&find(ctx, resource_path, reference, label)?)?,
+    };
+    Ok(ctx
+        .client
+        .get(&detail_path(resource_path, id), &Query::new())?
+        .body)
+}
+
+/// Just the id of a page given by id, `/path/`, or slug. A numeric id costs
+/// no request; a path or slug costs one list lookup.
+pub fn resolve_id(ctx: &Context, resource_path: &str, reference: &str, label: &str) -> Result<u64> {
+    let reference = reference.trim();
+    if let Ok(id) = reference.parse::<u64>() {
+        return Ok(id);
+    }
+    id_of(&find(ctx, resource_path, reference, label)?)
+}
+
+/// A page by id, `/path/`, or slug, as cheaply as possible: the detail for an
+/// id, otherwise the list row, which has no `content`, `extra_content` or
+/// `agents`. Use [`resolve`] when those are needed.
+pub fn find(ctx: &Context, resource_path: &str, reference: &str, label: &str) -> Result<Value> {
     let reference = reference.trim();
     if let Ok(id) = reference.parse::<u64>() {
         return Ok(ctx
@@ -589,7 +617,7 @@ fn resolve_parent(ctx: &Context, resource_path: &str, reference: &str) -> Result
     } else {
         PATH
     };
-    let found = resolve(ctx, resource_path, reference, "parent page")
-        .or_else(|first| resolve(ctx, other, reference, "parent page").map_err(|_| first))?;
-    Ok(Value::from(id_of(&found)?))
+    let id = resolve_id(ctx, resource_path, reference, "parent page")
+        .or_else(|first| resolve_id(ctx, other, reference, "parent page").map_err(|_| first))?;
+    Ok(Value::from(id))
 }

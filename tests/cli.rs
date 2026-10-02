@@ -838,3 +838,128 @@ fn pages_list_no_longer_sends_include_content() {
         .success();
     list.assert();
 }
+
+#[test]
+fn area_pages_get_by_slug_fetches_the_detail_with_content() {
+    let mut env = Env::new();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/content/area-pages/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "downtown".into()))
+        .with_body(
+            r#"{"results":[{"id":31,"slug":"downtown","path":"/downtown/"}],"pagination":{}}"#,
+        )
+        .expect(1)
+        .create();
+    let detail = env
+        .server
+        .mock("GET", "/api/v3/content/area-pages/31/")
+        .with_body(
+            r#"{"id":31,"slug":"downtown","path":"/downtown/","content":"<p>Lofts and parks</p>"}"#,
+        )
+        .expect(1)
+        .create();
+
+    let out = env
+        .cmd()
+        .args(["area-pages", "get", "downtown"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["content"], "<p>Lofts and parks</p>");
+    list.assert();
+    detail.assert();
+}
+
+#[test]
+fn pages_get_by_path_fetches_the_detail_with_content() {
+    let mut env = Env::new();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/content/pages/")
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/resources/buyers/".into(),
+        ))
+        .with_body(r#"{"results":[{"id":7,"path":"/resources/buyers/"}],"pagination":{}}"#)
+        .expect(1)
+        .create();
+    let detail = env
+        .server
+        .mock("GET", "/api/v3/content/pages/7/")
+        .with_body(r#"{"id":7,"path":"/resources/buyers/","content":"<p>Buyer guide</p>"}"#)
+        .expect(1)
+        .create();
+
+    let out = env
+        .cmd()
+        .args(["pages", "get", "/resources/buyers/"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["content"], "<p>Buyer guide</p>");
+    list.assert();
+    detail.assert();
+}
+
+#[test]
+fn pages_update_by_slug_skips_the_detail_fetch() {
+    let mut env = Env::new();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/content/pages/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "about".into()))
+        .with_body(r#"{"results":[{"id":5,"slug":"about"}],"pagination":{}}"#)
+        .expect(1)
+        .create();
+    let detail = env
+        .server
+        .mock("GET", "/api/v3/content/pages/5/")
+        .with_body(r#"{"id":5}"#)
+        .expect(0)
+        .create();
+    let patch = env
+        .server
+        .mock("PATCH", "/api/v3/content/pages/5/")
+        .match_body(Matcher::Json(json!({ "title": "About us" })))
+        .with_body(r#"{"id":5,"title":"About us"}"#)
+        .expect(1)
+        .create();
+
+    env.cmd()
+        .args(["pages", "update", "about", "--title", "About us"])
+        .assert()
+        .success();
+    list.assert();
+    detail.assert();
+    patch.assert();
+}
+
+#[test]
+fn pages_update_by_id_sends_only_the_patch() {
+    let mut env = Env::new();
+    let detail = env
+        .server
+        .mock("GET", "/api/v3/content/pages/5/")
+        .with_body(r#"{"id":5}"#)
+        .expect(0)
+        .create();
+    let patch = env
+        .server
+        .mock("PATCH", "/api/v3/content/pages/5/")
+        .match_body(Matcher::Json(json!({ "title": "About us" })))
+        .with_body(r#"{"id":5,"title":"About us"}"#)
+        .expect(1)
+        .create();
+
+    env.cmd()
+        .args(["pages", "update", "5", "--title", "About us"])
+        .assert()
+        .success();
+    detail.assert();
+    patch.assert();
+}

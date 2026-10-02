@@ -211,7 +211,9 @@ geekcli pages delete 17 --orphan-children        # children become top-level
 
 Lists (`pages list`, `area-pages list`, `agent-pages list`) never include
 `content`, `extra_content` or `agents`, which keeps them fast on sites with
-tens of thousands of pages. Use `get` for a page's content.
+tens of thousands of pages. Use `get` for a page's content: it returns the
+full record whether the page is given by id, path or slug. The table view
+cuts `content` short, so read it with `-o json`.
 
 Templates can add areas (`geekcli templates list` shows them). Set
 them with `--area "Name=value"`, repeatable; `Name=null` clears one. The
