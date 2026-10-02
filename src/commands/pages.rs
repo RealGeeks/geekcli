@@ -135,8 +135,8 @@ pub struct TreeListArgs {
     /// Anchor text, title or slug contains
     #[arg(long, short = 's', value_name = "TEXT")]
     pub search: Option<String>,
-    /// Omit content from the results
-    #[arg(long)]
+    /// No effect: lists never include content (kept so older scripts still run)
+    #[arg(long, hide = true)]
     pub no_content: bool,
     #[command(flatten)]
     pub paging: Paging,
@@ -149,9 +149,6 @@ impl TreeListArgs {
         push(&mut query, "path", self.path.as_deref());
         push(&mut query, "parent", self.parent.as_deref());
         push(&mut query, "q", self.search.as_deref());
-        if self.no_content {
-            query.push(("include_content".into(), "false".into()));
-        }
         self.paging.apply(&mut query);
         query
     }

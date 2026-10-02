@@ -412,14 +412,20 @@ fn print_sidebar(ctx: &Context, sidebar: &Value) -> Result<()> {
             .get("used_by")
             .and_then(Value::as_array)
             .map(|pages| {
+                // `used_by` holds at most 500 slugs; `used_by_count` is the real total
+                let total = sidebar
+                    .get("used_by_count")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .unwrap_or(pages.len());
                 let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
-                let more = pages.len().saturating_sub(shown.len());
+                let more = total.saturating_sub(shown.len());
                 let tail = if more > 0 {
                     format!(", +{more} more")
                 } else {
                     String::new()
                 };
-                format!("{} page(s): {}{tail}", pages.len(), shown.join(", "))
+                format!("{total} page(s): {}{tail}", shown.join(", "))
             })
             .unwrap_or_default();
         ctx.printer.note(&format!(
