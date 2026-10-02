@@ -13,7 +13,7 @@ use crate::config::{self, Config, Overrides};
 use crate::error::Result;
 use crate::output::{Format, Printer};
 
-const ABOUT: &str = "Create and edit blog posts and content pages on a Real Geeks site.";
+const ABOUT: &str = "The Real Geeks command line: manage a Real Geeks website's content.";
 const AFTER_HELP: &str = "\
 Start with `geekcli auth login --site www.example.com`, then `geekcli me`.
 
@@ -21,7 +21,9 @@ Start with `geekcli auth login --site www.example.com`, then `geekcli me`.
 shows its topics and `guide <topic>` prints one, e.g. `guide html` (what the
 sanitizer keeps and what breaks on a page), `guide search` (criteria the site
 accepts), `guide rebrand` (every place a site's identity lives), `guide exit`.
-After changing anything visible, `geekcli snapshot <path> --full` and look.";
+After changing anything visible, `geekcli snapshot <path> --full` and look.
+
+API reference: https://developers.realgeeks.com/content-api/";
 
 #[derive(Debug, Parser)]
 #[command(name = "geekcli", version, about = ABOUT, after_help = AFTER_HELP, propagate_version = true)]

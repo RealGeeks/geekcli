@@ -7,6 +7,10 @@ built to be driven by scripts and AI agents as much as by people: JSON on
 stdout when piped, JSON errors on stderr, stable exit codes, and a built-in
 guide written for agents.
 
+It is a client for the Real Geeks Content API, documented at
+<https://developers.realgeeks.com/content-api/>. The API is switched on per
+site; site owners can [request access](https://developers.realgeeks.com/request-api-access/).
+
 ```bash
 geekcli auth login --site www.example.com
 geekcli me
@@ -109,11 +113,12 @@ Environment variables cover CI and agent sandboxes without a config file:
 ```
 geekcli auth        login | logout | status | sites | use
 geekcli me
-geekcli posts       list | get | create | update | delete | publish | unpublish
+geekcli posts       list | get | create | update | delete | publish | unpublish |
+                      revisions | revision | revert
 geekcli categories  list | get | create | update | delete
 geekcli blog        get | update
 geekcli pages       list | get | create | update | delete | search | revisions | revision | revert
-geekcli area-pages  list | get | create | update | delete | search
+geekcli area-pages  list | get | create | update | delete | search | revisions | revision | revert
 geekcli agent-pages list | get | create | update | delete | revisions | revision | revert
 geekcli agents
 geekcli home-page   get | update | revisions | revision | revert
@@ -122,7 +127,7 @@ geekcli search      fields | choices | check | run | url
 geekcli nav         list | get | add | update | move | remove | set | clear
 geekcli sidebars    list | get | create | rename | delete | item | add-html | add-links |
                       update-item | move-item | remove-item | set-items
-geekcli footers     list | get | create | update | delete
+geekcli footers     list | get | create | update | delete | revisions | revision | revert
 geekcli featured    list | get | create | update | delete | add-tile | update-tile | remove-tile | set-tiles
 geekcli settings    list | groups | get | set | clear
 geekcli design      get | templates | variation | set | preview
@@ -159,8 +164,9 @@ Highlights:
 - **Drafts by default**: `posts create` sends `status: draft` unless you pass
   `--status published`. The API itself defaults to published, which is the
   wrong default for automation.
-- **Undo**: `pages revisions`, `pages revision <id>` and `pages revert <id>` (also
-  on agent pages and the home page) list, preview and undo saves.
+- **Undo**: `revisions`, `revision <ref> <id>` and `revert <ref> <id>` list,
+  preview and undo saves on pages, agent pages, area pages, blog posts,
+  footers and the home page.
 - **Partial updates**: `update` sends a PATCH with only the flags you passed.
   `--replace` sends a PUT. `--data '{...}'`, `--data @file.json` or
   `--data -` merges arbitrary fields.
@@ -182,8 +188,10 @@ Highlights:
 - **Design**: `design templates`, `design preview --snapshot` and `design set`
   change the template and colour scheme, with an unsaved preview first.
 - **Blog landing page**: `blog get|update` for the blog's own title, meta and heading.
-- **Files**: upload images and PDFs to the site's media bucket and get back
-  the public URL to use in content, posts and settings.
+- **Files**: upload images and PDFs to the site's media bucket, or have the
+  site fetch one from a URL (`--from-url`, including images an AI platform
+  generated), and get back the public URL to use in content, posts and
+  settings.
 - **Browser checks**: `geekcli snapshot / --full` renders the whole page with
   your installed Chrome (driven over DevTools), while `--selector '.hero'`
   captures one component. `geekcli inspect / --assert "document.querySelectorAll('h1').length === 1"`
