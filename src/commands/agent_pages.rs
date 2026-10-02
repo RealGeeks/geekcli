@@ -32,6 +32,7 @@ pub const DETAIL_COLUMNS: &[Column] = &[
     col("agent", "/agent_name"),
     col("agent_id", "/agent_id"),
     col("template", "/template"),
+    col("content", "/content"),
     col("sidebar", "/sidebar/name"),
     col("search", "/search/description"),
     col("landscape", "/landscape_image_override"),
@@ -141,7 +142,7 @@ pub fn run(ctx: &Context, cmd: AgentPagesCommand) -> Result<()> {
             print_written(ctx, &created, DETAIL_COLUMNS, "Created")
         }
         AgentPagesSub::Update(args) => {
-            let id = super::id_of(&pages::resolve(ctx, PATH, &args.reference, "agent page")?)?;
+            let id = pages::resolve_id(ctx, PATH, &args.reference, "agent page")?;
             let mut payload = args.fields.payload(ctx, PATH)?;
             payload.set("template", args.template.as_deref());
             if let Some(agent) = &args.agent_id {
@@ -166,15 +167,15 @@ pub fn run(ctx: &Context, cmd: AgentPagesCommand) -> Result<()> {
             orphan_children.then_some("orphan_children"),
         ),
         AgentPagesSub::Revisions { reference, limit } => {
-            let id = super::id_of(&pages::resolve(ctx, PATH, &reference, "agent page")?)?;
+            let id = pages::resolve_id(ctx, PATH, &reference, "agent page")?;
             super::revisions::list(ctx, &pages::detail_path(PATH, id), limit)
         }
         AgentPagesSub::Revision { reference, rev } => {
-            let id = super::id_of(&pages::resolve(ctx, PATH, &reference, "agent page")?)?;
+            let id = pages::resolve_id(ctx, PATH, &reference, "agent page")?;
             super::revisions::show(ctx, &pages::detail_path(PATH, id), rev)
         }
         AgentPagesSub::Revert { reference, rev } => {
-            let id = super::id_of(&pages::resolve(ctx, PATH, &reference, "agent page")?)?;
+            let id = pages::resolve_id(ctx, PATH, &reference, "agent page")?;
             super::revisions::revert(ctx, &pages::detail_path(PATH, id), rev, "agent page")
         }
     }
