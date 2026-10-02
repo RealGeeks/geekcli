@@ -838,3 +838,202 @@ fn pages_list_no_longer_sends_include_content() {
         .success();
     list.assert();
 }
+
+fn bottom_bar(urls: &[&str]) -> Value {
+    let links: Vec<Value> = urls
+        .iter()
+        .enumerate()
+        .map(|(i, url)| {
+            json!({
+                "id": 10 + i,
+                "order": i,
+                "type": "custom",
+                "url": url,
+                "anchor_text": format!("Link {i}"),
+                "nofollow": false
+            })
+        })
+        .collect();
+    json!({ "id": 2, "type": "bottom_primary", "label": "Bottom bar", "links": links })
+}
+
+fn mock_bars(env: &mut Env, bar: &Value) {
+    env.server
+        .mock("GET", "/api/v3/content/navigation-bars/")
+        .with_body(json!({ "results": [bar] }).to_string())
+        .create();
+}
+
+#[test]
+fn nav_add_refuses_a_duplicate_url_without_posting() {
+    let mut env = Env::new();
+    mock_bars(&mut env, &bottom_bar(&["/about/", "/luxury/"]));
+    let post = env
+        .server
+        .mock("POST", "/api/v3/content/navigation-bars/2/links/")
+        .expect(0)
+        .create();
+    let out = env
+        .cmd()
+        .args([
+            "nav",
+            "add",
+            "bottom_primary",
+            "--url",
+            " /Luxury ",
+            "--text",
+            "Lux",
+        ])
+        .assert()
+        .code(6)
+        .get_output()
+        .stderr
+        .clone();
+    let err = parse(&out);
+    assert_eq!(err["error"]["code"], "duplicate_link");
+    let message = err["error"]["message"].as_str().unwrap();
+    assert!(message.contains("link 11 \"Link 1\""), "{message}");
+    assert!(message.contains("--allow-duplicate"), "{message}");
+    post.assert();
+}
+
+#[test]
+fn nav_add_treats_the_sites_own_host_as_a_relative_url() {
+    let mut env = Env::new();
+    mock_bars(&mut env, &bottom_bar(&["/luxury/"]));
+    let url = format!("{}/luxury", env.server.url());
+    env.cmd()
+        .args([
+            "nav",
+            "add",
+            "bottom_primary",
+            "--url",
+            &url,
+            "--text",
+            "Lux",
+        ])
+        .assert()
+        .code(6);
+}
+
+#[test]
+fn nav_add_allow_duplicate_posts() {
+    let mut env = Env::new();
+    mock_bars(&mut env, &bottom_bar(&["/luxury/"]));
+    let post = env
+        .server
+        .mock("POST", "/api/v3/content/navigation-bars/2/links/")
+        .match_body(Matcher::PartialJson(json!({ "url": "/luxury/" })))
+        .with_body(bottom_bar(&["/luxury/", "/luxury/"]).to_string())
+        .create();
+    let out = env
+        .cmd()
+        .args([
+            "nav",
+            "add",
+            "bottom_primary",
+            "--url",
+            "/luxury/",
+            "--text",
+            "Lux",
+            "--allow-duplicate",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    post.assert();
+    let bar = parse(&out);
+    assert_eq!(bar["links"][1]["duplicate_of"], 10);
+    assert!(bar["links"][0].get("duplicate_of").is_none());
+}
+
+#[test]
+fn nav_add_warns_on_a_crowded_bar_and_keeps_json_stdout() {
+    let mut env = Env::new();
+    let urls: Vec<String> = (0..8).map(|i| format!("/p{i}/")).collect();
+    let refs: Vec<&str> = urls.iter().map(String::as_str).collect();
+    mock_bars(&mut env, &bottom_bar(&refs));
+    let mut after = refs.clone();
+    after.push("/new/");
+    let post = env
+        .server
+        .mock("POST", "/api/v3/content/navigation-bars/2/links/")
+        .with_body(bottom_bar(&after).to_string())
+        .create();
+    let output = env
+        .cmd()
+        .args([
+            "nav",
+            "add",
+            "bottom_primary",
+            "--url",
+            "/new/",
+            "--text",
+            "New",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: Bottom bar has 9 links; Real Geeks recommends 6-8",
+        ))
+        .get_output()
+        .clone();
+    post.assert();
+    let bar = parse(&output.stdout);
+    assert_eq!(bar["links"].as_array().unwrap().len(), 9);
+}
+
+#[test]
+fn nav_add_within_the_recommendation_is_quiet() {
+    let mut env = Env::new();
+    mock_bars(&mut env, &bottom_bar(&["/a/"]));
+    env.server
+        .mock("POST", "/api/v3/content/navigation-bars/2/links/")
+        .with_body(bottom_bar(&["/a/", "/b/"]).to_string())
+        .create();
+    env.cmd()
+        .args([
+            "nav",
+            "add",
+            "bottom_primary",
+            "--url",
+            "/b/",
+            "--text",
+            "B",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn nav_set_warns_on_repeated_urls_but_sends_the_list() {
+    let mut env = Env::new();
+    mock_bars(&mut env, &bottom_bar(&["/about/", "/luxury/"]));
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/content/navigation-bars/2/links/")
+        .with_body(bottom_bar(&["/luxury/", "/about/", "/luxury"]).to_string())
+        .create();
+    let output = env
+        .cmd()
+        .args([
+            "nav",
+            "set",
+            "bottom_primary",
+            "--data",
+            r#"[{"id": 11}, {"id": 10}, {"type": "custom", "url": "/LUXURY", "anchor_text": "Lux"}]"#,
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: --data item 2 repeats item 0",
+        ))
+        .get_output()
+        .clone();
+    put.assert();
+    let bar = parse(&output.stdout);
+    assert_eq!(bar["links"][2]["duplicate_of"], 10);
+}
