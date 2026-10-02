@@ -683,3 +683,219 @@ fn unclosed_polygon_warns_but_is_sent() {
         ));
     meta.assert();
 }
+
+/// The site's field catalog, in the shape the site serves: city and
+/// subdivision are filled from listings (`dynamic`, no choices), price is a
+/// range searched as `list_price_min` / `list_price_max`.
+const CATALOG: &str = r#"[
+{"id":"city","label":"City","widget":"multiselect","flags":["all_option","dynamic"],"choices":[],"child":["subdivision"]},
+{"id":"subdivision","label":"Subdivision","widget":"multiselect","flags":["dynamic"],"all_key":"All Subdivisions","choices":[]},
+{"id":"list_price","label":"Price","widget":"min_max_field","flags":["min_max_field"],"default_min":50000,"default_max":"all","choices":[{"label":"$1,000,000","val":1000000}]},
+{"id":"pool","label":"Pool","widget":"boolean","flags":[],"choices":[{"label":"Yes","val":true},{"label":"No","val":false}]},
+{"id":"view","label":"View","widget":"some_new_widget"},
+{"label":"no id, skipped"},
+{"id":"type","label":"Type","widget":"multiselect","flags":null,"choices":[{"label":"Home","val":"res"},{"label":"Condo","val":"con"}]}
+]"#;
+
+fn mock_catalog(server: &mut ServerGuard) -> mockito::Mock {
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(CATALOG)
+        .expect(1)
+        .create()
+}
+
+fn attrs(doc: &Value) -> Vec<String> {
+    doc["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["attr"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn fields_come_from_the_catalog() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = mock_catalog(&mut server);
+    let form = server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .expect(0)
+        .create();
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "fields"])
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+    catalog.assert();
+    form.assert();
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(
+        attrs(&doc),
+        [
+            "city",
+            "subdivision",
+            "list_price",
+            "pool",
+            "view",
+            "type",
+            "polygon"
+        ]
+    );
+    let rows = doc["results"].as_array().unwrap();
+    assert_eq!(rows[0]["section"], "catalog");
+    assert_eq!(rows[0]["dynamic"], true);
+    assert_eq!(rows[0]["depends_on"], serde_json::json!(["subdivision"]));
+    assert_eq!(
+        rows[2]["params"],
+        serde_json::json!(["list_price_min", "list_price_max"])
+    );
+    assert_eq!(rows[2]["default_min"], 50000);
+    assert_eq!(rows[2]["choices"][0]["value"], 1_000_000);
+    assert_eq!(rows[4]["widget"], "some_new_widget");
+    assert_eq!(rows[4]["choices_count"], 0);
+    assert_eq!(rows[5]["choices_count"], 2);
+    assert_eq!(rows[5]["params"], serde_json::json!(["type"]));
+    let polygon = &rows[6];
+    assert_eq!(polygon["section"], "builtin");
+    let mut keys: Vec<&String> = polygon.as_object().unwrap().keys().collect();
+    let mut catalog_keys: Vec<&String> = rows[0].as_object().unwrap().keys().collect();
+    keys.sort();
+    catalog_keys.sort();
+    assert_eq!(keys, catalog_keys, "polygon row has the same shape");
+}
+
+#[test]
+fn fields_fall_back_to_the_form_without_a_catalog() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(1)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "fields"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("field catalog could not be read"));
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(
+        attrs(&doc),
+        ["city", "type", "type", "list_price_min", "polygon"]
+    );
+    assert_eq!(doc["results"][0]["section"], "primary");
+    assert_eq!(doc["results"][0]["params"], serde_json::json!(["city"]));
+}
+
+#[test]
+fn choices_come_from_the_catalog() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(CATALOG)
+        .create();
+    let form = server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(1)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "type"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["results"][1]["value"], "con");
+    assert_eq!(doc["results"][1]["label"], "Condo");
+
+    // a range param finds its catalog field
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "list_price_min"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results"][0]["value"], 1_000_000);
+
+    // a listings-driven field has no catalog values: the form's default list
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results"][1]["value"], "Miami");
+    form.assert();
+
+    cmd(&server, &dir)
+        .args(["search", "choices", "q"])
+        .assert()
+        .code(4);
+}
+
+#[test]
+fn check_validates_values_against_the_catalog() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(
+            r#"{"description":"d","criteria":{"city":["McLean"],"type":["rez"],"pool":["1"],"subdivision":["Cedar Point"]}}"#,
+        )
+        .create();
+    let catalog = mock_catalog(&mut server);
+    let form = server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .expect(0)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(AUTOCOMPLETE)
+        .expect(1)
+        .create();
+    let out = cmd(&server, &dir)
+        .args([
+            "search",
+            "check",
+            "city=McLean",
+            "type=rez",
+            "pool=1",
+            "subdivision=Cedar Point",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    catalog.assert();
+    form.assert();
+    index.assert();
+    let doc = parse(&out);
+    assert_eq!(doc["choices_source"], "catalog");
+    let warnings = doc["value_warnings"].as_array().unwrap();
+    let by_field = |f: &str| warnings.iter().find(|w| w["field"] == f).cloned();
+    assert_eq!(by_field("city").unwrap()["kind"], "case_mismatch");
+    let ty = by_field("type").unwrap();
+    assert_eq!(ty["kind"], "unknown_value");
+    assert_eq!(ty["suggestions"][0], "res");
+    assert!(by_field("pool").is_none(), "yes-no fields are not checked");
+    assert!(by_field("subdivision").is_none(), "{doc}");
+    assert_eq!(
+        doc["values_checked"],
+        serde_json::json!(["city", "type", "subdivision"])
+    );
+}

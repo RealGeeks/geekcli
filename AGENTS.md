@@ -130,8 +130,10 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
 - The API key never leaves the site's origin: no cross-origin redirects,
   no full URLs off the site, https only (plain http just for local dev
   hosts). Keep it that way in any new request path.
-- Search commands use the site's public `/api/v2/search/` and
-  `/search_forms/api/advanced_search_form.json` through `Client::site_get`;
+- Search commands use the site's public `/api/v2/search/`, its field
+  catalog `/search_forms/api/dump_uberform_fields.json` (falling back to
+  `/search_forms/api/advanced_search_form.json` on sites without one) and
+  the autocomplete index, through `Client::site_get`;
   everything else goes through `/api/v3/`. The site drops unknown criteria
   silently, so `understand()` in `search.rs` always diffs input keys against
   what `/metadata/` echoes back.
