@@ -1,0 +1,177 @@
+name: Release
+
+# release-please keeps a release PR open on main from the conventional
+# commits; merging it tags a version, the build matrix attaches one archive
+# per platform to that GitHub release, and verify-install runs the install
+# scripts against the fresh release on each OS.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build assets for, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-please:
+    name: Release Please
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release Please
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          release-type: rust
+
+  build:
+    name: Build ${{ matrix.settings.target }}
+    needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ${{ matrix.settings.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            exe: .exe
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.settings.target }}
+
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.settings.target }}
+
+      - name: Smoke test
+        shell: bash
+        run: target/${{ matrix.settings.target }}/release/geekcli${{ matrix.settings.exe }} --version
+
+      - name: Package
+        id: archive
+        shell: bash
+        run: |
+          NAME="geekcli-${TAG}-${{ matrix.settings.target }}"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.settings.target }}/release/geekcli${{ matrix.settings.exe }}" README.md docs/GUIDE.md "dist/$NAME/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ARCHIVE="$NAME.zip"
+            (cd dist && 7z a -tzip "../$ARCHIVE" "$NAME" >/dev/null)
+          else
+            ARCHIVE="$NAME.tar.gz"
+            tar -czf "$ARCHIVE" -C dist "$NAME"
+          fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          fi
+          cat "$ARCHIVE.sha256"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload --clobber "$TAG" "${{ steps.archive.outputs.archive }}" "${{ steps.archive.outputs.archive }}.sha256"
+
+  verify-install:
+    name: Install on ${{ matrix.os }}
+    needs: [release-please, build]
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: install.sh
+        if: runner.os != 'Windows'
+        run: |
+          export GEEKCLI_INSTALL_DIR="$RUNNER_TEMP/bin"
+          sh install.sh --version "$TAG"
+          "$GEEKCLI_INSTALL_DIR/geekcli" --version | grep -F "${TAG#v}"
+
+      - name: install.sh piped (the documented curl | sh path)
+        if: runner.os != 'Windows'
+        run: |
+          # The flag forms that survive a pipe, since `| sh --version X` would
+          # hand the flag to sh and install nothing.
+          export GEEKCLI_INSTALL_DIR="$RUNNER_TEMP/bin-piped"
+          cat install.sh | sh -s -- --version "$TAG"
+          "$GEEKCLI_INSTALL_DIR/geekcli" --version | grep -F "${TAG#v}"
+
+          export GEEKCLI_INSTALL_DIR="$RUNNER_TEMP/bin-env"
+          cat install.sh | GEEKCLI_VERSION="$TAG" sh
+          "$GEEKCLI_INSTALL_DIR/geekcli" --version | grep -F "${TAG#v}"
+
+          cat install.sh | sh -s -- --help | grep -F 'GEEKCLI_VERSION'
+
+      - name: install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:GEEKCLI_INSTALL_DIR = "$env:RUNNER_TEMP\bin"
+          ./install.ps1 -Version $env:TAG
+          $out = & "$env:GEEKCLI_INSTALL_DIR\geekcli.exe" --version
+          if ($out -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "unexpected version: $out" }
+
+      - name: install.ps1 through iex (the documented irm | iex path)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # iex passes no arguments, so the version has to arrive in the
+          # environment or through a scriptblock.
+          $env:GEEKCLI_INSTALL_DIR = "$env:RUNNER_TEMP\bin-iex"
+          $env:GEEKCLI_VERSION = $env:TAG
+          Get-Content -Raw ./install.ps1 | Invoke-Expression
+          $out = & "$env:GEEKCLI_INSTALL_DIR\geekcli.exe" --version
+          if ($out -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "unexpected version: $out" }
+
+          Remove-Item Env:GEEKCLI_VERSION
+          $env:GEEKCLI_INSTALL_DIR = "$env:RUNNER_TEMP\bin-block"
+          & ([scriptblock]::Create((Get-Content -Raw ./install.ps1))) -Version $env:TAG
+          $out = & "$env:GEEKCLI_INSTALL_DIR\geekcli.exe" --version
+          if ($out -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "unexpected version: $out" }
