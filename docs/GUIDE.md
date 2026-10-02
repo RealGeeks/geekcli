@@ -370,6 +370,50 @@ Values are site specific. Before writing a search link, confirm the field
 exists with `search fields`, the value with `search choices`, and the
 result with `search run`.
 
+### Custom areas (polygon)
+
+A school attendance zone, or a neighbourhood with no MLS subdivision value,
+can still be a search: `polygon` takes a boundary drawn as points, the way
+the site's map drawing tool saves it. It is a normal criterion, so it works
+in `search check`, `search run`, `search url` and `--search-criteria`. The
+site's search form does not list it; `search fields` adds it as a built-in
+row.
+
+```
+polygon=lat,lng;lat,lng;lat,lng;…;lat,lng
+```
+
+- Decimal degrees, **latitude first**, a comma inside a point and `;`
+  between points. About 5 decimals (roughly 1 m) is plenty.
+- Close the ring: repeat the first point at the end, as the map tool does.
+- At least 3 distinct points. Keep it to about 100 or fewer; simplify a
+  traced boundary rather than sending every vertex.
+- A polygon replaces the site's default location limits (default county or
+  cities), and combines with other criteria such as type, price and beds
+  (use the names `search fields` lists).
+
+```bash
+P="polygon=38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902;38.75421,-77.23718;38.78512,-77.24901"
+geekcli search check "$P" type=res           # polygon and type both understood?
+geekcli search run "$P" type=res --per-page 5  # listings come back, total looks right?
+geekcli area-pages create --slug my-zone --area-name "My Zone" --anchor-text "My Zone" \
+    --search-criteria "$P" --search-criteria type=res
+```
+
+Quote the value: `;` ends a command in the shell.
+
+The CLI checks the value before sending it. A point that is not two numbers,
+a latitude outside -90..90 or a longitude outside -180..180, or fewer than 3
+distinct points is a usage error (exit code 2) and nothing is sent. It warns
+on stderr, and still sends the value unchanged, when the ring is not closed,
+when a latitude is below -60 (no listings are there; it almost always means
+the points are lng,lat), or when there are more than 100 points.
+
+The boundary is yours to get right. Take it from an authoritative source
+(the school district's or city's official boundary map, a published GIS
+layer), not from memory, and check the `search run` total and a few result
+addresses against that map before attaching it to a page.
+
 API reference: [Searches](https://developers.realgeeks.com/content-api/searches/).
 
 ## 12. Navigation bars
