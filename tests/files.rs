@@ -118,6 +118,43 @@ fn upload_sends_multipart_with_detected_type() {
 }
 
 #[test]
+fn upload_is_retried_after_a_rate_limit() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("hero.png");
+    std::fs::write(&local, b"\x89PNG fake").unwrap();
+    let body = Matcher::AllOf(vec![
+        Matcher::Regex(r#"name="file"; filename="hero.png""#.into()),
+        Matcher::Regex("PNG fake".into()),
+    ]);
+    let limited = server
+        .mock("POST", "/api/v3/files/upload/")
+        .match_body(body.clone())
+        .with_status(429)
+        .with_header("retry-after", "0")
+        .with_body(r#"{"error":{"code":"rate_limited","message":"slow down"}}"#)
+        .expect(1)
+        .create();
+    // the retry must send the whole multipart body again
+    let ok = server
+        .mock("POST", "/api/v3/files/upload/")
+        .match_body(body)
+        .with_status(201)
+        .with_body(LOGO)
+        .expect(1)
+        .create();
+    cmd(&server, &dir)
+        .args(["files", "upload", "--to", "images/", "-q"])
+        .arg(&local)
+        .assert()
+        .success()
+        .stdout("https://u.realgeeks.media/example/images/logo.png\n")
+        .stderr("rate limited; retrying in 0s (attempt 1 of 3)\n");
+    limited.assert();
+    ok.assert();
+}
+
+#[test]
 fn mkdir_splits_folder_and_name() {
     let mut server = Server::new();
     let dir = tempfile::tempdir().unwrap();

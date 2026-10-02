@@ -3,6 +3,8 @@
 //! and nothing about individual resources.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -34,6 +36,9 @@ pub struct Client {
     api_key: Option<String>,
     max_retries: u32,
     verbose: bool,
+    /// Set once the low-quota warning has been printed, so a long batch run
+    /// says it once rather than on every request.
+    quota_warned: Arc<AtomicBool>,
 }
 
 /// A successful response, decoded.
@@ -76,6 +81,7 @@ impl Client {
             api_key: target.api_key.clone(),
             max_retries,
             verbose,
+            quota_warned: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -106,11 +112,13 @@ impl Client {
         self.request(&Method::POST, &self.site_url(path), query, None, false)
     }
 
-    /// POST a multipart form (file uploads) to an `/api/v3/` path.
+    /// POST a multipart form (file uploads) to an `/api/v3/` path. A form
+    /// body can only be sent once, so `form` builds a fresh one for each
+    /// attempt when a 429 is retried.
     pub fn post_multipart(
         &self,
         path: &str,
-        form: reqwest::blocking::multipart::Form,
+        form: impl Fn() -> Result<reqwest::blocking::multipart::Form>,
     ) -> Result<ApiResponse> {
         let Some(key) = &self.api_key else {
             return Err(Error::NotLoggedIn(
@@ -118,19 +126,13 @@ impl Client {
             ));
         };
         let url = self.url(path);
-        if self.verbose {
-            eprintln!("> POST {url} (multipart)");
-        }
-        let response = self
-            .http
-            .post(&url)
-            .header(AUTHORIZATION, format!("Bearer {key}"))
-            .multipart(form)
-            .send()?;
-        if self.verbose {
-            eprintln!("< {}", response.status());
-        }
-        decode(response)
+        self.send_with_retry("POST", &url, " (multipart)", || {
+            Ok(self
+                .http
+                .post(&url)
+                .header(AUTHORIZATION, format!("Bearer {key}"))
+                .multipart(form()?))
+        })
     }
 
     /// Resolve a path relative to `/api/v3/`. Absolute `/api/v3/...` paths
@@ -271,27 +273,55 @@ impl Client {
                     .into(),
             ));
         }
+        self.send_with_retry(method.as_str(), &url, "", || {
+            Ok(self.build(method, &url, query, body, auth))
+        })
+    }
+
+    /// Send a request built by `make`, retrying 429s up to `max_retries`
+    /// times. Every back-off prints a one-line notice on stderr, verbose or
+    /// not, so a long wait never looks like a hang; stdout is untouched.
+    fn send_with_retry(
+        &self,
+        method: &str,
+        url: &str,
+        label: &str,
+        make: impl Fn() -> Result<RequestBuilder>,
+    ) -> Result<ApiResponse> {
         let mut attempt = 0;
         loop {
-            let request = self.build(method, &url, query, body, auth);
+            let request = make()?;
             if self.verbose {
-                eprintln!("> {method} {url}");
+                eprintln!("> {method} {url}{label}");
             }
             let response = request.send()?;
             let status = response.status();
             if self.verbose {
                 eprintln!("< {status}");
             }
+            self.check_quota(response.headers());
             if status == StatusCode::TOO_MANY_REQUESTS && attempt < self.max_retries {
                 let wait = retry_after(&response).unwrap_or(5).min(MAX_RETRY_WAIT);
-                if self.verbose {
-                    eprintln!("< rate limited, retrying in {wait}s");
-                }
-                thread::sleep(Duration::from_secs(wait));
                 attempt += 1;
+                eprintln!(
+                    "rate limited; retrying in {wait}s (attempt {attempt} of {})",
+                    self.max_retries
+                );
+                thread::sleep(Duration::from_secs(wait));
                 continue;
             }
             return decode(response);
+        }
+    }
+
+    /// Warn once on stderr when `X-RateLimit-*` headers show less than 10%
+    /// of the window's requests left. Responses without them change nothing.
+    fn check_quota(&self, headers: &HeaderMap) {
+        let Some(warning) = quota_warning(headers) else {
+            return;
+        };
+        if !self.quota_warned.swap(true, Ordering::Relaxed) {
+            eprintln!("{warning}");
         }
     }
 
@@ -347,7 +377,49 @@ fn retry_after(response: &Response) -> Option<u64> {
         .headers()
         .get(RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse().ok())
+        .and_then(|v| parse_retry_after(v, chrono::Utc::now()))
+}
+
+/// `Retry-After` is either delay-seconds or an HTTP-date. A date in the past
+/// means "now" (0).
+fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<u64> {
+    let value = value.trim();
+    if let Ok(secs) = value.parse() {
+        return Some(secs);
+    }
+    let when = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    let secs = (when.with_timezone(&chrono::Utc) - now).num_seconds();
+    Some(u64::try_from(secs).unwrap_or(0))
+}
+
+/// The low-quota warning for these headers, if remaining is under 10% of
+/// the limit. `X-RateLimit-Reset` may be seconds from now or a Unix time.
+fn quota_warning(headers: &HeaderMap) -> Option<String> {
+    let num = |name: &str| -> Option<u64> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok())
+    };
+    let remaining = num("x-ratelimit-remaining")?;
+    let limit = num("x-ratelimit-limit")?;
+    if limit == 0 || remaining.saturating_mul(10) >= limit {
+        return None;
+    }
+    let text = format!(
+        "warning: rate limit nearly used: {remaining} of {limit} requests left in this window"
+    );
+    if let Some(reset) = num("x-ratelimit-reset") {
+        // Anything past 2001-09-09 as a Unix time is a timestamp, not a delay.
+        let secs = if reset >= 1_000_000_000 {
+            let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+            reset.saturating_sub(now)
+        } else {
+            reset
+        };
+        return Some(format!("{text} (resets in {secs}s)"));
+    }
+    Some(text)
 }
 
 fn decode(response: Response) -> Result<ApiResponse> {
@@ -527,6 +599,49 @@ mod tests {
         let err = parse_error(502, "<html>bad gateway</html>", None);
         assert_eq!(err.code, "server_error");
         assert!(err.message.contains("HTTP 502"));
+    }
+
+    #[test]
+    fn retry_after_takes_seconds_or_an_http_date() {
+        let now = chrono::DateTime::parse_from_rfc3339("2015-10-21T07:27:30Z")
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_default();
+        assert_eq!(parse_retry_after(" 12 ", now), Some(12));
+        assert_eq!(
+            parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now),
+            Some(30)
+        );
+        assert_eq!(
+            parse_retry_after("Wed, 21 Oct 2015 07:00:00 GMT", now),
+            Some(0)
+        );
+        assert_eq!(parse_retry_after("soon", now), None);
+    }
+
+    #[test]
+    fn quota_warning_below_ten_percent_only() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (k, v) in pairs {
+                map.insert(*k, HeaderValue::from_static(v));
+            }
+            map
+        };
+        assert!(quota_warning(&headers(&[])).is_none());
+        assert!(quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "60"),
+            ("x-ratelimit-limit", "600")
+        ]))
+        .is_none());
+        let warning = quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "59"),
+            ("x-ratelimit-limit", "600"),
+            ("x-ratelimit-reset", "120"),
+        ]));
+        assert_eq!(
+            warning.as_deref(),
+            Some("warning: rate limit nearly used: 59 of 600 requests left in this window (resets in 120s)")
+        );
     }
 
     #[test]
