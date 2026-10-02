@@ -66,10 +66,10 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub meta_keywords: Option<String>,
     /// Content as inline HTML (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML")]
+    #[arg(long, value_name = "HTML", aliases = ["body", "html"])]
     pub content: Option<String>,
     /// Read the content from a file, or `-` for stdin; `.md` files are converted from Markdown
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", aliases = ["body-file", "html-file"])]
     pub content_file: Option<String>,
     /// Treat the content as Markdown and convert it to HTML
     #[arg(long)]

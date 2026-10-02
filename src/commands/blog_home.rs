@@ -46,10 +46,10 @@ pub struct UpdateArgs {
     #[arg(long)]
     pub meta_keywords: Option<String>,
     /// HTML shown above the post list (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML")]
+    #[arg(long, value_name = "HTML", aliases = ["body", "html"])]
     pub content: Option<String>,
     /// Read the content from a file, or `-` for stdin; `.md` converts from Markdown
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", aliases = ["body-file", "html-file"])]
     pub content_file: Option<String>,
     #[arg(long)]
     pub markdown: bool,

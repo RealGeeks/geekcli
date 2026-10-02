@@ -97,10 +97,15 @@ pub enum SidebarsSub {
 pub struct HtmlArgs {
     pub reference: String,
     /// Inline HTML (or Markdown with --markdown)
-    #[arg(long, value_name = "HTML")]
+    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "body")]
     pub html: Option<String>,
     /// Read the HTML from a file, or `-` for stdin; `.md` converts from Markdown
-    #[arg(long, value_name = "FILE")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        visible_alias = "content-file",
+        alias = "body-file"
+    )]
     pub html_file: Option<String>,
     #[arg(long)]
     pub markdown: bool,
@@ -133,9 +138,14 @@ pub struct LinksArgs {
 pub struct UpdateItemArgs {
     pub reference: String,
     pub item: u64,
-    #[arg(long, value_name = "HTML")]
+    #[arg(long, value_name = "HTML", visible_alias = "content", alias = "body")]
     pub html: Option<String>,
-    #[arg(long, value_name = "FILE")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        visible_alias = "content-file",
+        alias = "body-file"
+    )]
     pub html_file: Option<String>,
     #[arg(long)]
     pub markdown: bool,
@@ -213,7 +223,7 @@ pub fn run(ctx: &Context, cmd: SidebarsCommand) -> Result<()> {
                 args.markdown,
             )?
             else {
-                return Err(Error::Usage("pass --html or --html-file".into()));
+                return Err(Error::Usage("pass --content or --content-file".into()));
             };
             add_item(
                 ctx,
@@ -283,7 +293,7 @@ pub fn run(ctx: &Context, cmd: SidebarsCommand) -> Result<()> {
             }
             if payload.is_empty() {
                 return Err(Error::Usage(
-                    "nothing to update: pass --html, --header, --link or --columns".into(),
+                    "nothing to update: pass --content, --header, --link or --columns".into(),
                 ));
             }
             let updated = ctx
