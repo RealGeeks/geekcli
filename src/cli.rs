@@ -67,7 +67,8 @@ pub struct Global {
     /// Log requests to stderr
     #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
-    /// Retries after a 429 rate limit
+    /// Retries after a 429 rate limit (uploads included). Each wait prints
+    /// `rate limited; retrying in Ns (attempt i of n)` on stderr
     #[arg(long, global = true, default_value_t = 3, value_name = "N")]
     pub max_retries: u32,
     /// Exit 5 after printing the result if the API returned any warnings.
