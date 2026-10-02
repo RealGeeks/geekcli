@@ -104,7 +104,7 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | 3    | not logged in, invalid key, key lacks the scope, or the site's API is off (`api_disabled`: Real Geeks enables it per site) |
 | 4    | not found                                               |
 | 5    | validation error (see `fields`), bad request, or a body too large (413) |
-| 6    | conflict: a guarded delete (the message names the flag), or two writes raced on the same slug or name (retry) |
+| 6    | conflict: a guarded write or delete (the message names the flag, e.g. `nav add --allow-duplicate`), or two writes raced on the same slug or name (retry) |
 | 7    | rate limited after retries (`retry_after` seconds)      |
 | 8    | network error                                           |
 
@@ -396,6 +396,21 @@ A link is `{"type": "custom"|"contact", "url", "anchor_text", "nofollow"}`.
 URL as a convenience. Ids are stable: `add --at` and `move` send a
 position, and `set` keeps the rows whose ids you include, so
 `--data '[{"id": 12}, {"id": 10}]'` is a pure reorder.
+
+Real Geeks recommends 5-6 links on a top bar and 6-8 on a bottom bar.
+`add` and `set` print a `warning:` line on stderr when a bar ends up over
+that; the write still happens and stdout is unchanged.
+
+`add` refuses a link whose URL is already on the bar: exit 6, code
+`duplicate_link`, nothing sent, and the message names the existing link's
+id and text. URLs match ignoring case, surrounding space, a trailing slash,
+the scheme and the site's own host, so `/luxury/`, `/Luxury` and
+`https://www.<site>/luxury` are the same link. A second `--contact` link is
+a duplicate too. Pass `--allow-duplicate` if you mean it; usually you want
+`nav update` on the existing link instead. `set` warns about repeated URLs
+in its list but sends it as given. `get` (and every command that prints a
+bar) adds `"duplicate_of": <id>` to each link that repeats an earlier one,
+so `nav get bottom_primary` shows what to remove.
 
 API reference: [Navigation bars](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#navigation-bars).
 
