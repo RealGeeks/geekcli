@@ -72,6 +72,11 @@ pub enum Error {
 
     #[error("{0}")]
     Other(String),
+
+    /// `--fail-on-warnings`: the request succeeded but the API returned
+    /// warnings. Raised after the result was printed.
+    #[error("the API returned {0} warning(s), printed above as `warning:` lines; the request itself succeeded")]
+    Warnings(usize),
 }
 
 impl Error {
@@ -100,6 +105,9 @@ impl Error {
                 ),
                 _ => None,
             },
+            Error::Warnings(_) => Some(
+                "--fail-on-warnings is set. Any write was already applied: fix the input and run it again, or undo it (`revisions`, `revert`)",
+            ),
             _ => None,
         }
     }
@@ -110,6 +118,7 @@ impl Error {
             Error::Config(_) | Error::NotLoggedIn(_) => exit::AUTH,
             Error::Api { status, .. } => api_exit_code(*status),
             Error::Network(_) => exit::NETWORK,
+            Error::Warnings(_) => exit::VALIDATION,
             Error::Io(_) | Error::Other(_) => exit::GENERAL,
         }
     }
@@ -124,6 +133,7 @@ impl Error {
             Error::Network(_) => "network",
             Error::Io(_) => "io",
             Error::Other(_) => "error",
+            Error::Warnings(_) => "warnings",
         }
     }
 
