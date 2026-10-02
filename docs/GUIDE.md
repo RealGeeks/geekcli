@@ -54,6 +54,19 @@ Keys are stored per site in `~/.config/geekcli/config.toml` (mode 600; `XDG_CONF
 first stored site becomes the default; `geekcli auth use <domain>` changes it.
 `geekcli auth sites` lists what is stored.
 
+A site can have two names: the one you logged in with (often
+`example.realgeeks.com`) and its live domain (say `www.example.com`), which is
+what `geekcli me` reports as `site.domain`. The key is stored under the login
+name, and login also records the live domain and current URL from `/me` as
+aliases, so `--site`, `GEEKCLI_SITE`, `auth use` and `auth logout` accept
+either name; both refer to the same site and key. Login prints
+`Logged in to example.realgeeks.com (live domain: www.example.com)` and
+`auth sites` shows an `aliases` column. A site stored by an older version has
+no aliases yet: `geekcli auth sites --refresh` asks each stored site's `/me`
+for its live domain and records it. If one alias belongs to more than one
+stored site, `--site` with it is a usage error (exit 2) that names them; pass
+a login name instead.
+
 Environment variables work without a config file and are the easiest way to
 run in CI or inside an agent sandbox:
 

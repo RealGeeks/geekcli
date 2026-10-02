@@ -941,3 +941,193 @@ fn pagination_stops_when_next_repeats() {
         .code(1)
         .stderr(predicate::str::contains("repeat"));
 }
+
+const ME_WITH_LIVE_DOMAIN: &str = r#"{"api_key":{"name":"CLI","scopes":["blog:write"],"expires_at":null},"site":{"domain":"www.example.com","current_url":"https://www.example.com/"}}"#;
+
+#[test]
+fn login_records_the_live_domain_and_site_accepts_it() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/me/")
+        .match_header("authorization", "Bearer rg_live_new")
+        .with_body(ME_WITH_LIVE_DOMAIN)
+        .expect_at_least(1)
+        .create();
+
+    let out = env
+        .cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env("GEEKCLI_SITE", "example.realgeeks.com")
+        .args(["auth", "login", "--api-key", "rg_live_new"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["aliases"], json!(["www.example.com"]));
+    let config = std::fs::read_to_string(env.config_dir.path().join("config.toml")).unwrap();
+    assert!(
+        config.contains("aliases = [\"www.example.com\"]"),
+        "{config}"
+    );
+
+    // the human status line names both
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env("GEEKCLI_SITE", "example.realgeeks.com")
+        .args(["-o", "table", "auth", "login", "--api-key", "rg_live_new"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Logged in to example.realgeeks.com (live domain: www.example.com)",
+        ));
+
+    // --site by the live domain uses the key stored under the login name
+    let me = env
+        .server
+        .mock("GET", "/api/v3/me/")
+        .match_header("authorization", "Bearer rg_live_new")
+        .with_body(ME_WITH_LIVE_DOMAIN)
+        .create();
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .args(["me", "--site", "https://www.example.com/"])
+        .assert()
+        .success();
+    me.assert();
+
+    let out = env
+        .cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .args(["auth", "sites"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        parse(&out)["results"][0]["aliases"],
+        json!(["www.example.com"])
+    );
+
+    let out = env
+        .cmd()
+        .args(["auth", "use", "www.example.com"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["default_site"], "example.realgeeks.com");
+
+    let out = env
+        .cmd()
+        .args(["auth", "logout", "--site", "www.example.com"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["site"], "example.realgeeks.com");
+    let config = std::fs::read_to_string(env.config_dir.path().join("config.toml")).unwrap();
+    assert!(!config.contains("rg_live_new"), "{config}");
+}
+
+#[test]
+fn login_without_site_details_stores_no_aliases() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/me/")
+        .with_body(r#"{"api_key":{"name":"CLI","scopes":[]}}"#)
+        .create();
+    let out = env
+        .cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .args(["auth", "login", "--api-key", "rg_live_new"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("live domain").not())
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["aliases"], json!([]));
+    let config = std::fs::read_to_string(env.config_dir.path().join("config.toml")).unwrap();
+    assert!(!config.contains("aliases"), "{config}");
+}
+
+fn write_config(env: &Env, body: &str) {
+    std::fs::write(env.config_dir.path().join("config.toml"), body).unwrap();
+}
+
+#[test]
+fn sites_refresh_backfills_aliases_for_an_old_config() {
+    let mut env = Env::new();
+    let url = env.server.url();
+    write_config(
+        &env,
+        &format!(
+            "default_site = \"example.realgeeks.com\"\n\n[sites.\"example.realgeeks.com\"]\napi_key = \"rg_live_old\"\nbase_url = \"{url}\"\n"
+        ),
+    );
+
+    // before the refresh the live domain is unknown, and the error says what to do
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env_remove("GEEKCLI_BASE_URL")
+        .args(["categories", "list", "--site", "www.example.com"])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("auth sites --refresh"));
+
+    let me = env
+        .server
+        .mock("GET", "/api/v3/me/")
+        .match_header("authorization", "Bearer rg_live_old")
+        .with_body(ME_WITH_LIVE_DOMAIN)
+        .create();
+    let out = env
+        .cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env_remove("GEEKCLI_BASE_URL")
+        .args(["auth", "sites", "--refresh"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    me.assert();
+    assert_eq!(
+        parse(&out)["results"][0]["aliases"],
+        json!(["www.example.com"])
+    );
+
+    env.server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_header("authorization", "Bearer rg_live_old")
+        .with_body(r#"{"results":[],"pagination":{}}"#)
+        .create();
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env_remove("GEEKCLI_BASE_URL")
+        .args(["categories", "list", "--site", "www.example.com"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn an_alias_shared_by_two_sites_exits_2() {
+    let env = Env::new();
+    write_config(
+        &env,
+        "[sites.\"a.example.realgeeks.com\"]\napi_key = \"rg_live_a\"\naliases = [\"www.example.com\"]\n\n[sites.\"b.example.realgeeks.com\"]\napi_key = \"rg_live_b\"\naliases = [\"www.example.com\"]\n",
+    );
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .env("GEEKCLI_SITE", "www.example.com")
+        .args(["me"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "a.example.realgeeks.com, b.example.realgeeks.com",
+        ));
+}

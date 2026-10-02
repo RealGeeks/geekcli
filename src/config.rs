@@ -7,6 +7,10 @@
 //! 3. the config file (`~/.config/geekcli/config.toml`), using `default_site`
 //!    when only one site is stored or a default has been set
 //!
+//! A site can be named by the key it was stored under (the `--site` value
+//! given at login) or by any of its aliases: the live domain and current URL
+//! that `/me` reported at login or on `auth sites --refresh`.
+//!
 //! `GEEKCLI_BASE_URL` (or `--base-url`) overrides the scheme/host the API is
 //! reached at, which is how you point the CLI at a local dev server.
 
@@ -39,6 +43,9 @@ pub struct SiteConfig {
     pub scopes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    /// Other names for the site (its live domain), filled from `/me`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
 }
 
 pub fn config_dir() -> Result<PathBuf> {
@@ -144,8 +151,60 @@ impl Config {
     }
 
     pub fn site(&self, domain: &str) -> Option<&SiteConfig> {
-        self.sites.get(&normalize_domain(domain))
+        self.lookup(domain).ok().flatten().map(|(_, site)| site)
     }
+
+    /// Find a stored site by its key, or else by one of its aliases. An alias
+    /// claimed by more than one stored site is a usage error naming them.
+    pub fn lookup(&self, name: &str) -> Result<Option<(&str, &SiteConfig)>> {
+        let name = normalize_domain(name);
+        if let Some((key, site)) = self.sites.get_key_value(&name) {
+            return Ok(Some((key.as_str(), site)));
+        }
+        let matches: Vec<(&str, &SiteConfig)> = self
+            .sites
+            .iter()
+            .filter(|(_, site)| site.aliases.contains(&name))
+            .map(|(key, site)| (key.as_str(), site))
+            .collect();
+        match matches.as_slice() {
+            [] => Ok(None),
+            [one] => Ok(Some(*one)),
+            many => Err(Error::Usage(format!(
+                "{name} is an alias of more than one stored site ({}); pass one of those names to --site",
+                many.iter().map(|(key, _)| *key).collect::<Vec<_>>().join(", ")
+            ))),
+        }
+    }
+
+    /// When `--site` named nothing stored and some stored sites have never
+    /// recorded their live domain, say how to record it. No requests are made.
+    pub fn refresh_hint(&self, name: &str) -> Option<String> {
+        let name = normalize_domain(name);
+        if self.sites.contains_key(&name) || !self.sites.values().any(|s| s.aliases.is_empty()) {
+            return None;
+        }
+        Some(format!(
+            "no stored key for {name}. If it is the live domain of a site you logged in to under another name, run `geekcli auth sites --refresh` to record live domains, or `geekcli auth login --site {name}`"
+        ))
+    }
+}
+
+/// The names `/me` reports for a site (`site.domain`, `site.current_url`),
+/// normalized, de-duplicated, and without the key the site is stored under.
+pub fn aliases_from_me(me: &serde_json::Value, key: &str) -> Vec<String> {
+    let key = normalize_domain(key);
+    let mut aliases = Vec::new();
+    for pointer in ["/site/domain", "/site/current_url"] {
+        let Some(raw) = me.pointer(pointer).and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let alias = normalize_domain(raw);
+        if !alias.is_empty() && alias != key && !aliases.contains(&alias) {
+            aliases.push(alias);
+        }
+    }
+    aliases
 }
 
 /// Create a new file readable only by its owner and write `bytes` to it.
@@ -216,19 +275,21 @@ pub struct Overrides {
 }
 
 pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> {
-    let domain = overrides
-        .site
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .map(normalize_domain)
-        .or_else(|| config.default_site.clone())
-        .or_else(|| {
-            if config.sites.len() == 1 {
-                config.sites.keys().next().cloned()
-            } else {
-                None
-            }
-        });
+    let named = match overrides.site.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(site) => Some(
+            config
+                .lookup(site)?
+                .map_or_else(|| normalize_domain(site), |(key, _)| key.to_string()),
+        ),
+        None => None,
+    };
+    let domain = named.or_else(|| config.default_site.clone()).or_else(|| {
+        if config.sites.len() == 1 {
+            config.sites.keys().next().cloned()
+        } else {
+            None
+        }
+    });
 
     let Some(domain) = domain else {
         // A base URL alone (local dev) still needs a domain for messages.
@@ -247,7 +308,7 @@ pub fn resolve_target(config: &Config, overrides: &Overrides) -> Result<Target> 
         ));
     };
 
-    let stored = config.site(&domain);
+    let stored = config.sites.get(&domain);
     let stored_base = stored.and_then(|s| s.base_url.clone());
     let base_url = overrides
         .base_url
@@ -515,5 +576,93 @@ mod tests {
         let path = dir.path().join("config.toml");
         assert!(config.save_to(&path).is_ok());
         assert_eq!(Config::load_from(&path).ok(), Some(config));
+    }
+
+    fn aliased(key: &str, aliases: &[&str]) -> SiteConfig {
+        SiteConfig {
+            api_key: format!("rg_live_{key}"),
+            aliases: aliases.iter().map(ToString::to_string).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn named(site: &str) -> Overrides {
+        Overrides {
+            site: Some(site.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn loads_a_config_written_before_aliases() {
+        let raw = "default_site = \"example.realgeeks.com\"\n\n[sites.\"example.realgeeks.com\"]\napi_key = \"rg_live_old\"\nscopes = [\"blog:write\"]\n";
+        let config: Config = toml::from_str(raw).unwrap_or_default();
+        let site = config.site("example.realgeeks.com");
+        assert_eq!(site.map(|s| s.api_key.as_str()), Some("rg_live_old"));
+        assert_eq!(site.map(|s| s.aliases.len()), Some(0));
+        let saved = toml::to_string_pretty(&config).unwrap_or_default();
+        assert!(!saved.contains("aliases"), "{saved}");
+    }
+
+    #[test]
+    fn site_resolves_by_alias_after_exact_key() {
+        let mut config = Config::default();
+        config.put_site("example.realgeeks.com", aliased("a", &["www.example.com"]));
+        config.put_site("www.other.com", aliased("b", &[]));
+        let target = resolve_target(&config, &named("https://WWW.Example.com/")).ok();
+        assert_eq!(
+            target.as_ref().map(|t| t.domain.as_str()),
+            Some("example.realgeeks.com")
+        );
+        assert_eq!(target.and_then(|t| t.api_key), Some("rg_live_a".into()));
+
+        // an exact key wins over another site's alias
+        config.put_site("www.example.com", aliased("c", &[]));
+        let target = resolve_target(&config, &named("www.example.com")).ok();
+        assert_eq!(target.and_then(|t| t.api_key), Some("rg_live_c".into()));
+    }
+
+    #[test]
+    fn an_alias_shared_by_two_sites_is_a_usage_error() {
+        let mut config = Config::default();
+        config.put_site("a.realgeeks.com", aliased("a", &["www.example.com"]));
+        config.put_site("b.realgeeks.com", aliased("b", &["www.example.com"]));
+        let err = resolve_target(&config, &named("www.example.com")).err();
+        assert!(
+            matches!(&err, Some(Error::Usage(m)) if m.contains("a.realgeeks.com, b.realgeeks.com")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_site_keeps_its_own_name() {
+        let mut config = Config::default();
+        config.put_site("a.realgeeks.com", aliased("a", &["www.a.com"]));
+        let target = resolve_target(&config, &named("www.b.com")).ok();
+        assert_eq!(
+            target.as_ref().map(|t| t.domain.as_str()),
+            Some("www.b.com")
+        );
+        assert_eq!(target.and_then(|t| t.api_key), None);
+    }
+
+    #[test]
+    fn aliases_come_from_me_without_the_key_or_duplicates() {
+        let me = serde_json::json!({"site": {
+            "domain": "www.example.com",
+            "current_url": "https://www.example.com/"
+        }});
+        assert_eq!(
+            aliases_from_me(&me, "example.realgeeks.com"),
+            vec!["www.example.com".to_string()]
+        );
+        assert!(matches!(
+            aliases_from_me(&me, "WWW.example.com").as_slice(),
+            []
+        ));
+        assert!(matches!(
+            aliases_from_me(&serde_json::json!({}), "a.com").as_slice(),
+            []
+        ));
     }
 }
