@@ -1,5 +1,6 @@
-//! Revision history and undo for content pages, agent landing pages and
-//! the home page: list saves, preview what a revert would restore, revert.
+//! Revision history and undo for content pages, agent landing pages, area
+//! pages, blog posts, footers and the home page: list saves, preview what a
+//! revert would restore, revert.
 
 use serde_json::{json, Value};
 

@@ -82,11 +82,26 @@ pub enum PostsSub {
         #[arg(long, conflicts_with = "at")]
         keep_date: bool,
     },
-    /// Revert a post to a draft
+    /// Take a post down: set it back to a draft
     Unpublish {
         /// Post id or slug
         reference: String,
     },
+    /// List a post's revisions, newest first
+    Revisions {
+        /// Post id or slug
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { reference: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Revisions track title, slug, body, status, publish, page_title, meta_* and facebook_image, so a revert can change the post's URL or publish/unpublish it. Check `posts revision <ref> <rev>` first.
+  - Category changes are not tracked; a revert leaves categories as they are.")]
+    Revert { reference: String, rev: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -237,6 +252,22 @@ pub fn run(ctx: &Context, cmd: PostsCommand) -> Result<()> {
             let body = json!({ "status": "draft" });
             let updated = ctx.client.patch(&detail_path(id_of(&post)?), &body)?.body;
             print_written(ctx, &updated, DETAIL_COLUMNS, "Unpublished")
+        }
+        PostsSub::Revisions { reference, limit } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::list(ctx, &detail_path(id), limit)
+        }
+        PostsSub::Revision { reference, rev } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::show(ctx, &detail_path(id), rev)
+        }
+        PostsSub::Revert { reference, rev } => {
+            let post = resolve(ctx, &reference)?;
+            let label = format!(
+                "post \"{}\"",
+                post.get("slug").and_then(Value::as_str).unwrap_or("")
+            );
+            super::revisions::revert(ctx, &detail_path(id_of(&post)?), rev, &label)
         }
     }
 }
