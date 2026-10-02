@@ -193,7 +193,8 @@ Highlights:
   without restating it.
 - **Search criteria you can trust**: `search fields` and `search choices` list
   what a site accepts, `search check` and `search run` show what the site
-  actually understood and flag ignored keys (exit 5), `search url --save`
+  actually understood and flag ignored keys (exit 5) and values that are
+  not the site's (wrong case, typos, with suggestions), `search url --save`
   stores a search and returns the id pages use. `pages search <ref>` shows
   the saved search behind a page, and `pages update --search-criteria …`
   or `--sidebar <name>` attaches a search or sidebar to it.

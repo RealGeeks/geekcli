@@ -277,3 +277,250 @@ fn choices_all_uses_the_autocomplete_index() {
         "{doc}"
     );
 }
+
+const AUTOCOMPLETE: &str = r#"[{"field":"city","value":"Mclean"},{"field":"city","value":"Riverside"},{"field":"city","value":"Miami Beach"},{"field":"subdivision","value":"Cedar Point"}]"#;
+
+fn mock_form_and_index(server: &mut ServerGuard) -> (mockito::Mock, mockito::Mock) {
+    let form = server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(1)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(AUTOCOMPLETE)
+        .expect(1)
+        .create();
+    (form, index)
+}
+
+#[test]
+fn check_warns_on_a_case_mismatch() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(
+            r#"{"description":"d","criteria":{"city":["McLean"],"list_price_min":["1000000"]}}"#,
+        )
+        .create();
+    let (form, index) = mock_form_and_index(&mut server);
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=McLean", "list_price_min=1000000"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("did you mean `Mclean`?"));
+    form.assert();
+    index.assert();
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["values_checked"], serde_json::json!(["city"]));
+    let w = &doc["value_warnings"][0];
+    assert_eq!(w["kind"], "case_mismatch");
+    assert_eq!(w["field"], "city");
+    assert_eq!(w["suggestions"], serde_json::json!(["Mclean"]));
+    assert_eq!(doc["value_warnings"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn check_suggests_close_values_for_an_unknown_one() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(
+            r#"{"description":"d","criteria":{"city":["Riversdie","Miami"],"type":["res"]}}"#,
+        )
+        .create();
+    let (_form, _index) = mock_form_and_index(&mut server);
+    let out = cmd(&server, &dir)
+        .args([
+            "search",
+            "check",
+            "city=Riversdie",
+            "city=Miami",
+            "type=res",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    let warnings = doc["value_warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{doc}");
+    assert_eq!(warnings[0]["kind"], "unknown_value");
+    assert_eq!(warnings[0]["value"], "Riversdie");
+    assert_eq!(warnings[0]["suggestions"][0], "Riverside");
+    assert!(warnings[0]["suggestions"].as_array().unwrap().len() <= 3);
+    assert_eq!(doc["values_checked"], serde_json::json!(["city", "type"]));
+}
+
+#[test]
+fn check_exact_form_values_skip_the_index() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(1)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .expect(0)
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "check", "city=Miami"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""value_warnings": []"#));
+    index.assert();
+}
+
+#[test]
+fn check_strict_fails_on_value_warnings() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["McLean"]}}"#)
+        .create();
+    let (_form, _index) = mock_form_and_index(&mut server);
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=McLean", "--strict"])
+        .assert()
+        .code(5);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_mismatch");
+    assert!(err["error"]["fields"]["city"][0]
+        .as_str()
+        .unwrap()
+        .contains("Mclean"));
+}
+
+#[test]
+fn check_count_reports_matches_and_warns_on_zero() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"list_price_min":["1000000"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .create();
+    let search = server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("list_price_min".into(), "1000000".into()),
+            Matcher::UrlEncoded("per_page".into(), "1".into()),
+        ]))
+        .with_header("x-total-count", "0")
+        .with_body("[]")
+        .expect(2)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "list_price_min=1000000", "--count"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("0 listings"));
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["count"], 0);
+    assert_eq!(
+        doc["warnings"],
+        serde_json::json!(["the search matches 0 listings"])
+    );
+
+    let assert = cmd(&server, &dir)
+        .args([
+            "search",
+            "check",
+            "list_price_min=1000000",
+            "--count",
+            "--strict",
+        ])
+        .assert()
+        .code(5);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "no_matches");
+    search.assert();
+}
+
+#[test]
+fn choices_fuzzy_ranks_by_edit_distance() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(AUTOCOMPLETE)
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "--all", "--fuzzy", "mclaen"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    let values: Vec<&str> = doc["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["value"].as_str().unwrap())
+        .collect();
+    assert_eq!(values[0], "Mclean");
+    assert_eq!(doc["results"][0]["distance"], 2);
+    assert_eq!(values.len(), 3);
+
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "--fuzzy", "biscayne"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["results"][0]["value"], "Key Biscayne");
+}
+
+#[test]
+fn check_strict_fails_when_values_cannot_be_checked() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Springfield"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_status(500)
+        .create();
+
+    // without --strict the check still passes and says what it skipped
+    cmd(&server, &dir)
+        .args(["search", "check", "city=Springfield"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=Springfield", "--strict"])
+        .assert()
+        .code(1);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+}
