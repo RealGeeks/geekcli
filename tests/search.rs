@@ -495,3 +495,32 @@ fn choices_fuzzy_ranks_by_edit_distance() {
     let doc = parse(&out);
     assert_eq!(doc["results"][0]["value"], "Key Biscayne");
 }
+
+#[test]
+fn check_strict_fails_when_values_cannot_be_checked() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Springfield"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_status(500)
+        .create();
+
+    // without --strict the check still passes and says what it skipped
+    cmd(&server, &dir)
+        .args(["search", "check", "city=Springfield"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=Springfield", "--strict"])
+        .assert()
+        .code(1);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+}

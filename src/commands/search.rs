@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use super::Context;
 use crate::client::Query;
 use crate::error::{Error, Result};
-use crate::output::{cell, col, Column, Format};
+use crate::output::{cell, col, sanitize, Column, Format};
 
 pub const SEARCH_PATH: &str = "api/v2/search/";
 pub const METADATA_PATH: &str = "api/v2/search/metadata/";
@@ -119,7 +119,7 @@ pub struct CheckArgs {
     /// Also run the search and report the number of matching listings (warns on 0)
     #[arg(long)]
     pub count: bool,
-    /// Fail (exit 5) on value warnings and, with --count, on 0 matches
+    /// Fail (exit 5) on value warnings and, with --count, on 0 matches; exit 1 if the values could not be checked
     #[arg(long)]
     pub strict: bool,
 }
@@ -783,11 +783,22 @@ fn check(ctx: &Context, args: &CheckArgs) -> Result<()> {
             retry_after: None,
         });
     }
+    // --strict promises the values were checked; say so when they could not be
+    if let (true, Some(e)) = (args.strict, &values.error) {
+        return Err(Error::Api {
+            status: 503,
+            code: "value_check_unavailable".into(),
+            message: format!("values could not be checked, so --strict cannot pass: {e}"),
+            fields: BTreeMap::new(),
+            retry_after: None,
+        });
+    }
+    // Messages carry values from the site, so strip control characters
     if let Some(e) = &values.error {
-        eprintln!("warning: values not checked: {e}");
+        eprintln!("warning: values not checked: {}", sanitize(e));
     }
     for w in &warnings {
-        eprintln!("warning: {w}");
+        eprintln!("warning: {}", sanitize(w));
     }
     Ok(())
 }

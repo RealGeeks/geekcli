@@ -367,7 +367,10 @@ the site stores `Mclean`. The result carries:
 - `warnings`: every warning as text, also printed to stderr.
 
 Warnings exit 0; `--strict` turns them into exit 5 (`value_mismatch`, or
-`no_matches` for a zero count) with the messages in `error.fields`. The
+`no_matches` for a zero count) with the messages in `error.fields`. If the
+site's choice lists cannot be read, values go unchecked (reported in
+`value_check_error`); `--strict` then exits 1 (`value_check_unavailable`)
+rather than pass a check it could not make. The
 form's own list is tried first and the site's autocomplete index (every
 county) only when the form does not settle it, so a value valid in another
 county is not flagged. A clean check without `--count` still does not prove
