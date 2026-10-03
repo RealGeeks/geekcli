@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/RealGeeks/geekcli/compare/v0.8.0...v0.9.0) (2026-10-03)
+
+
+### Features
+
+* **auth:** accept a site's live domain as well as its login name ([#49](https://github.com/RealGeeks/geekcli/issues/49)) ([88b7faa](https://github.com/RealGeeks/geekcli/commit/88b7faaf997f20740eb709482ff310888f8db31a)), closes [#11](https://github.com/RealGeeks/geekcli/issues/11)
+
 ## [0.8.0](https://github.com/RealGeeks/geekcli/compare/v0.7.1...v0.8.0) (2026-10-03)
 
 
