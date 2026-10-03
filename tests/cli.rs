@@ -1485,7 +1485,11 @@ fn a_retired_cli_is_told_to_update() {
     let out = env.cmd().arg("me").output().unwrap();
 
     assert_eq!(out.status.code(), Some(9));
-    assert!(out.stdout.is_empty());
+    assert!(
+        out.stdout.is_empty(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let err = parse(&out.stderr);
     assert_eq!(err["error"]["code"], "client_too_old");
     assert_eq!(err["error"]["exit_code"], 9);
