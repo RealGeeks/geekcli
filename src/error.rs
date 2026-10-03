@@ -16,6 +16,7 @@ pub mod exit {
     pub const CONFLICT: i32 = 6;
     pub const RATE_LIMITED: i32 = 7;
     pub const NETWORK: i32 = 8;
+    pub const UPGRADE_REQUIRED: i32 = 9;
 }
 
 /// The API's error envelope: `{"error": {"code", "message", "fields"}}`.
@@ -38,6 +39,7 @@ impl ApiError {
             400 | 413 | 415 | 422 => exit::VALIDATION,
             409 => exit::CONFLICT,
             429 => exit::RATE_LIMITED,
+            426 => exit::UPGRADE_REQUIRED,
             _ => exit::GENERAL,
         }
     }
@@ -93,6 +95,9 @@ impl Error {
                 ("token_expired", _) => Some(
                     "the key has expired (keys live at most six months); run `geekcli auth login --site <domain>` for a new one",
                 ),
+                ("client_too_old", _) | (_, 426) => Some(
+                    "this geekcli is older than the site's API accepts; run `geekcli update`, then run the command again",
+                ),
                 ("api_disabled", _) => Some(
                     "the content API is switched on per site by Real Geeks; ask support to enable it",
                 ),
@@ -121,6 +126,8 @@ impl Error {
         match self {
             Error::Usage(_) => exit::USAGE,
             Error::Config(_) | Error::NotLoggedIn(_) => exit::AUTH,
+            // the API retiring an old CLI: the code decides, whatever the status
+            Error::Api { code, .. } if code == "client_too_old" => exit::UPGRADE_REQUIRED,
             Error::Api { status, .. } => api_exit_code(*status),
             Error::Network(_) => exit::NETWORK,
             Error::Warnings(_) => exit::VALIDATION,
@@ -230,6 +237,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_retired_cli_has_its_own_exit_code() {
+        assert_eq!(api(426, "client_too_old").exit_code(), 9);
+        assert_eq!(api(426, "upgrade_required").exit_code(), 9);
+        assert_eq!(api(400, "client_too_old").exit_code(), 9);
+        assert_eq!(api(400, "validation_error").exit_code(), 5);
+    }
+
     fn api(status: u16, code: &str) -> Error {
         Error::Api {
             status,
@@ -251,6 +266,9 @@ mod tests {
         assert!(api(405, "method_not_allowed")
             .hint()
             .is_some_and(|hint| hint.contains("canonical domain")));
+        assert!(api(426, "client_too_old")
+            .hint()
+            .is_some_and(|h| h.contains("geekcli update")));
         assert!(api(404, "not_found").hint().is_none());
         assert!(api(422, "validation_error").hint().is_none());
     }

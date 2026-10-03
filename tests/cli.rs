@@ -1466,3 +1466,32 @@ fn closed_stdout_exits_quietly_for_printer_output() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn a_retired_cli_is_told_to_update() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/me/")
+        .match_header(
+            "user-agent",
+            concat!("geekcli/", env!("CARGO_PKG_VERSION")),
+        )
+        .with_status(426)
+        .with_body(
+            r#"{"error":{"code":"client_too_old","message":"geekcli 0.7 is no longer supported; 1.0.0 or newer is required"}}"#,
+        )
+        .create();
+
+    let out = env.cmd().arg("me").output().unwrap();
+
+    assert_eq!(out.status.code(), Some(9));
+    assert!(out.stdout.is_empty());
+    let err = parse(&out.stderr);
+    assert_eq!(err["error"]["code"], "client_too_old");
+    assert_eq!(err["error"]["exit_code"], 9);
+    assert!(err["error"]["message"].as_str().unwrap().contains("1.0.0"));
+    assert!(err["error"]["hint"]
+        .as_str()
+        .unwrap()
+        .contains("geekcli update"));
+}

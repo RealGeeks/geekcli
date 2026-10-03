@@ -124,6 +124,12 @@ archive also carries a signed build-provenance attestation; check that a
 download was built from this repository with
 `gh attestation verify <archive> --repo RealGeeks/geekcli`.
 
+To update, run `geekcli update`: it installs the latest release over the
+binary you have, after the same sha256 check (`geekcli update --check` only
+reports whether there is one). geekcli never updates on its own; on a
+terminal it mentions a newer release once a day
+(`GEEKCLI_NO_UPDATE_CHECK=1` turns that off), and scripts never see that.
+
 To uninstall, delete the `geekcli` binary and, if you no longer want the
 stored keys, `~/.config/geekcli/` (revoke the keys under **Admin → API keys**
 on each site too).
@@ -288,6 +294,7 @@ geekcli snapshot    [PATH] [--full|--mobile] [--selector CSS] [--out FILE]
 geekcli inspect     [PATH] --text|--html|--attr|--count|--exists|--visible|--js|--assert …
 geekcli api         METHOD PATH [-p k=v] [-d JSON]
 geekcli guide
+geekcli update      [--check] [--tag vX.Y.Z]
 geekcli completions <shell>
 ```
 
@@ -309,7 +316,8 @@ Highlights:
   the site (`crm_unavailable`, `design_catalogue_unavailable`,
   `files_unavailable`) worth retrying; 2 usage, 3 auth, which also covers a
   site whose API is switched off (`api_disabled`); 4 not found, 5 validation,
-  6 conflict, 7 rate limited, 8 network. Errors are JSON on stderr in JSON
+  6 conflict, 7 rate limited, 8 network, 9 this geekcli is too old for the
+  API (run `geekcli update`). Errors are JSON on stderr in JSON
   mode and include the API's per-field messages.
 - **Markdown in, HTML out**: `--content-file post.md` or `--markdown` converts
   before sending. `<!--read more-->` marks the summary break in posts. Content

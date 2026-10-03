@@ -7,7 +7,7 @@ use crate::client::Client;
 use crate::commands::{
     agent_pages, api, area_pages, auth, blog_home, categories, design, featured, files, footers,
     guide, home_page, inspect, nav, pages, posts, search, settings, sidebars, snapshot, templates,
-    Context,
+    update, Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -151,6 +151,9 @@ pub enum Command {
     Api(api::ApiArgs),
     /// The usage guide for scripts and AI agents, whole or one topic (`guide html`)
     Guide(guide::GuideArgs),
+    /// Replace this binary with the latest release (not `<resource> update`)
+    #[command(visible_alias = "upgrade")]
+    Update(update::UpdateArgs),
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -160,10 +163,23 @@ pub enum Command {
 
 pub fn run(cli: Cli) -> Result<()> {
     let printer = Printer::new(cli.global.format(), cli.global.quiet);
+    let notify = !matches!(
+        cli.command,
+        Command::Update(_) | Command::Guide(_) | Command::Completions { .. }
+    );
+    let result = dispatch(cli, printer);
+    if notify {
+        update::notify(printer);
+    }
+    result
+}
+
+fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
     let overrides = cli.global.overrides();
 
     match cli.command {
         Command::Guide(args) => guide::run(&args),
+        Command::Update(args) => update::run(printer, &args),
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "geekcli", &mut std::io::stdout());
@@ -211,7 +227,10 @@ pub fn run(cli: Cli) -> Result<()> {
                 Command::Snapshot(args) => snapshot::run(&ctx, &args),
                 Command::Inspect(args) => inspect::run(&ctx, &args),
                 Command::Api(args) => api::run(&ctx, &args),
-                Command::Guide(_) | Command::Completions { .. } | Command::Auth(_) => Ok(()),
+                Command::Guide(_)
+                | Command::Update(_)
+                | Command::Completions { .. }
+                | Command::Auth(_) => Ok(()),
             };
             result?;
             match ctx.client.warning_count() {

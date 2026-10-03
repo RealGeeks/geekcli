@@ -22,6 +22,8 @@ irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex  
 ```
 
 The scripts verify the release checksum; `geekcli --version` confirms it.
+`geekcli update` installs a newer release later (§27); nothing updates on
+its own.
 
 ```bash
 # Approve the CLI in your browser: the site's admin login runs, you click
@@ -120,6 +122,7 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | 6    | conflict: a guarded delete (the message names the flag), or two writes raced on the same slug or name (retry) |
 | 7    | rate limited after retries (`retry_after` seconds)      |
 | 8    | network error                                           |
+| 9    | this geekcli is too old for the site's API (`client_too_old`, or HTTP 426): run `geekcli update`, then run the command again (§27) |
 
 429 responses are retried automatically up to `--max-retries` (default 3),
 file uploads included, honouring `Retry-After` (seconds or an HTTP date;
@@ -1128,3 +1131,56 @@ API reference: [the full Content API](https://developers.realgeeks.com/content-a
 10. When the API can do something the CLI has no flag for, check the
     [API changelog](https://developers.realgeeks.com/content-api/changelog/)
     and reach it with `geekcli api` (§25).
+
+## 27. Updating geekcli
+
+geekcli never updates itself in the background: a script keeps the version
+it was written against until something runs `geekcli update` (also spelled
+`geekcli upgrade`, and unrelated to `posts update` and the other resource
+updates).
+
+```bash
+geekcli update --check        # is there a newer release? installs nothing
+geekcli update                # install the latest release over this binary
+geekcli update --tag v0.7.0   # install one release; an older tag downgrades
+```
+
+Every form prints
+`{"current_version", "release_version", "update_available", "updated", "target"}`,
+plus `path` after an install. `update_available` compares the release with
+the binary that ran the command, so it is still `true` in the result of the
+run that installed it; `updated` says whether the binary was replaced.
+`--check` exits 0 either way: branch on `update_available`.
+
+The archive is the one `install.sh` and `install.ps1` use, from the GitHub
+release for this platform (Linux always gets the static build). It is
+verified against the `.sha256` published beside it and against the digest
+GitHub records for the asset, and the binary is replaced only after both
+pass. A failed update leaves the installed version in place. These requests
+go to GitHub and never carry the site's API key.
+
+On a terminal, any command says once a day (on stderr) when a newer release
+exists. Scripts, agents and CI never get that notice or the lookup behind
+it: it needs a table-format run with stderr on a terminal and no `CI`
+variable, and `GEEKCLI_NO_UPDATE_CHECK=1` turns it off everywhere. The time
+of the last look is kept in `update-check` beside `config.toml`.
+
+What a script or agent gets instead is the API's word on old versions.
+Every request names the CLI's version (`User-Agent: geekcli/<version>`), so
+the API can tell an old one apart. If it answers with a warning about the
+version, that arrives like any other API warning: a `warning:` line on
+stderr and an entry in `warnings` (§2). If it refuses the version
+(`client_too_old`, or HTTP 426), the command fails with **exit 9**: run
+`geekcli update` and repeat the command.
+
+| Problem | What to do |
+| ------- | ---------- |
+| `client_too_old` (exit 9) | The site's API no longer accepts this version. `geekcli update`, then run the command again. |
+| `cannot write to <dir>` (exit 1) | The binary is in a directory you cannot write, such as a root-owned `/usr/local/bin`. Re-run with `sudo`, or reinstall with `GEEKCLI_INSTALL_DIR` set to a directory you own. |
+| `rate_limited` (exit 7) | GitHub limits anonymous lookups per address. Set `GH_TOKEN` or `GITHUB_TOKEN`, or retry later. |
+| `not_found` (exit 4) | No release has that `--tag`. |
+| `network` (exit 8) | GitHub is unreachable. The update trusts the operating system's certificate store, so a corporate proxy's certificate has to be installed there. |
+
+`GEEKCLI_REPO=owner/name` updates from a fork, as it does for the install
+scripts. A binary built from source (`cargo install`) is replaced by the
+release build.
