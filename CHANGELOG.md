@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/RealGeeks/geekcli/compare/v0.7.1...v0.8.0) (2026-10-03)
+
+
+### Features
+
+* geekcli update, a daily update notice and exit 9 for a retired CLI ([#59](https://github.com/RealGeeks/geekcli/issues/59)) ([19050ab](https://github.com/RealGeeks/geekcli/commit/19050abeb291a37f13c3ad2051a13aafe7bc56b6))
+
+
+### Bug Fixes
+
+* **client:** say when backing off on rate limits and retry uploads ([#44](https://github.com/RealGeeks/geekcli/issues/44)) ([4c77114](https://github.com/RealGeeks/geekcli/commit/4c771143047525191bbc5c63d7c748c92b7d6188)), closes [#9](https://github.com/RealGeeks/geekcli/issues/9)
+
 ## [0.7.1](https://github.com/RealGeeks/geekcli/compare/v0.7.0...v0.7.1) (2026-10-02)
 
 
