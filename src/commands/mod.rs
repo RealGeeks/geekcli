@@ -23,6 +23,7 @@ pub mod settings;
 pub mod sidebars;
 pub mod snapshot;
 pub mod templates;
+pub mod update;
 
 use std::io::{self, IsTerminal, Write};
 

@@ -94,6 +94,9 @@ pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
         ("docs", "support articles"),
         ("articles", "support articles"),
         ("raw", "anything else"),
+        ("update", "updating geekcli"),
+        ("upgrade", "updating geekcli"),
+        ("version", "updating geekcli"),
     ];
     let needle = aliases
         .iter()
@@ -176,6 +179,7 @@ mod tests {
             "files",
             "footers",
             "workflow",
+            "update",
         ] {
             assert!(!find(&all, topic).is_empty(), "no section for {topic}");
         }

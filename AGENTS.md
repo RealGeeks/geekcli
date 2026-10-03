@@ -40,8 +40,9 @@ The rules that keep a live site safe:
 
 1. `geekcli me` first, to confirm the site and the key's scopes.
 2. Output is JSON when piped and errors are JSON on stderr with stable exit
-   codes (3 auth, 4 not found, 5 validation, 7 rate limited). On exit 5 read
-   `error.fields` and fix those fields.
+   codes (3 auth, 4 not found, 5 validation, 7 rate limited, 9 geekcli too
+   old). On exit 5 read `error.fields` and fix those fields; on exit 9 run
+   `geekcli update` and repeat the command.
 3. `posts create` makes drafts unless you pass `--status published`.
 4. `update` only changes the flags you pass. Avoid `--replace`.
 5. Read `warnings` on writes. A `warning:` line on stderr (and a
@@ -100,6 +101,7 @@ src/
     ├── revisions.rs   # revision list/preview/revert shared by pages, agent pages, home page
     ├── search.rs      # property search (/api/v2/search/): fields, check, run, url, saved-search lookup
     ├── guide.rs       # `guide [topic]` over docs/GUIDE.md
+    ├── update.rs      # self-update from the GitHub release archives (self_update crate, its own client)
     └── api.rs         # raw METHOD PATH escape hatch
 tests/                 # end-to-end tests against a mockito server; snapshot/inspect use a real Chrome when installed
 docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <topic>` prints one `## N. Title` section
@@ -130,6 +132,14 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
 - The API key never leaves the site's origin: no cross-origin redirects,
   no full URLs off the site, https only (plain http just for local dev
   hosts). Keep it that way in any new request path.
+- `geekcli update` is the one request path that leaves the site: it talks to
+  GitHub through `self_update`'s own client and must never be handed the
+  site key. Nothing updates in the background; scripts and agents need the
+  version to stay put between calls. `update::notify` mentions a newer
+  release once a day, on a terminal only. Retiring a version is the API's
+  job: it sees `User-Agent: geekcli/<version>` and answers `client_too_old`
+  (or 426), which `error.rs` maps to exit 9 and a hint to update. Its archive and folder names come from
+  `release.yml`, like the install scripts'.
 - Search commands use the site's public `/api/v2/search/`, its field
   catalog `/search_forms/api/dump_uberform_fields.json` (falling back to
   `/search_forms/api/advanced_search_form.json` on sites without one) and
@@ -161,7 +171,7 @@ updates the pins. `release.yml` uses
 release-please: merging its release PR tags a version, builds the
 macOS/Linux (static musl)/Windows archives with THIRD_PARTY_LICENSES.html
 (cargo-about, `about.toml`), attests their build provenance, uploads them to
-the GitHub release, then runs `install.sh` and `install.ps1` against it. Keep those scripts in step with the archive
+the GitHub release, then runs `install.sh` and `install.ps1` against it. Keep those scripts and `commands/update.rs` in step with the archive
 names in `release.yml`.
 
 ### Commits
