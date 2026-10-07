@@ -22,6 +22,7 @@ pub const COLUMNS: &[Column] = &[
     col("footer", "/footer/name"),
     col("search", "/search/description"),
     col("tile_group", "/tile_group/title"),
+    col("featured_agents", "/featured_agents"),
     col("landscape", "/landscape_image_override"),
 ];
 
@@ -48,6 +49,7 @@ pub enum HomePageSub {
     #[command(after_help = "Notes:
   - --search-criteria drives the listings strip; --search-field-defaults-criteria pre-fills the search form (county, price floor, types).
   - --property-display-type, --search-form-tabs and --tile-group render on anna-modern only; build the tiles with `geekcli featured` first.
+  - --featured-agents is the full list of agent cards (photo and bio) on the home page: Agent Detail pages by id, /path/ or slug, comma-separated; `null` removes them all. These are content pages (`pages list --template \"Agent Detail Page\"`), not CRM agents from `agents`. The list picks who shows, not the order. A card's name, bio and photo come from that page: change them with `pages update`. Renders on anna-modern, and in the anna sidebar with the ENABLE_FEATURED_AGENTS_IN_SIDEBAR setting.
   - --search-header (alias --page-heading) is the page's main hero heading, not a small label; unset, the site shows the BIG_SEARCH_TITLE setting (\"Real Estate Search\"). Use the page's target keyword.
   - --landscape takes a file URL (an .mp4 becomes a video), `none` to hide the header image, or `null` for the site's; `geekcli guide featured`.
   - The hero background is --landscape, or the sitewide HEADER_IMAGE setting when the page has none. --search-image is not a background: it renders as an image (logo-style) inside the hero.
@@ -120,6 +122,10 @@ pub struct UpdateArgs {
     #[arg(long, value_name = "ID_TITLE_OR_NULL")]
     #[arg(help_heading = super::heading::LAYOUT)]
     pub tile_group: Option<String>,
+    /// Agent Detail pages to feature with photo and bio (the full list): ids, paths or slugs, comma-separated, or `null` for none
+    #[arg(long, value_name = "PAGES_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
+    pub featured_agents: Option<String>,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]
     pub data: Option<String>,
@@ -183,6 +189,9 @@ pub fn run(ctx: &Context, cmd: HomePageCommand) -> Result<()> {
                 };
                 payload.set_value("tile_group", value);
             }
+            if let Some(agents) = &args.featured_agents {
+                payload.set_value("featured_agents", featured_agents(ctx, agents)?);
+            }
             payload.merge_json(args.data.as_deref())?;
             if payload.is_empty() {
                 return Err(Error::Usage(
@@ -193,4 +202,22 @@ pub fn run(ctx: &Context, cmd: HomePageCommand) -> Result<()> {
             print_written(ctx, &updated, COLUMNS, "Updated")
         }
     }
+}
+
+/// `--featured-agents`: Agent Detail pages by id, path or slug, as the list
+/// of page ids the API takes; `null` (or nothing) is the empty list.
+fn featured_agents(ctx: &Context, text: &str) -> Result<serde_json::Value> {
+    if matches!(
+        text.trim().to_ascii_lowercase().as_str(),
+        "null" | "none" | "-" | ""
+    ) {
+        return Ok(serde_json::Value::Array(Vec::new()));
+    }
+    let ids = text
+        .split(',')
+        .map(str::trim)
+        .filter(|reference| !reference.is_empty())
+        .map(|reference| super::pages::resolve_id(ctx, super::pages::PATH, reference, "page"))
+        .collect::<Result<Vec<u64>>>()?;
+    Ok(serde_json::Value::from(ids))
 }

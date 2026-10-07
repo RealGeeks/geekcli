@@ -635,6 +635,39 @@ fn home_page_display_options() {
 }
 
 #[test]
+fn home_page_featured_agents() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let lookup = server
+        .mock("GET", "/api/v3/content/pages/")
+        .match_query(Matcher::UrlEncoded("path".into(), "/dana/".into()))
+        .with_body(r#"{"results":[{"id":90,"path":"/dana/"}]}"#)
+        .create();
+    let set = server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(json!({ "featured_agents": [86, 90] })))
+        .with_body(r#"{"id":1,"url":"https://x/","featured_agents":[86,90]}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["home-page", "update", "--featured-agents", "86, /dana/"])
+        .assert()
+        .success();
+    lookup.assert();
+    set.assert();
+
+    let clear = server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(json!({ "featured_agents": [] })))
+        .with_body(r#"{"id":1,"url":"https://x/","featured_agents":[]}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["home-page", "update", "--featured-agents", "null"])
+        .assert()
+        .success();
+    clear.assert();
+}
+
+#[test]
 fn design_set_and_preview() {
     let mut server = Server::new();
     let dir = tempfile::tempdir().unwrap();
