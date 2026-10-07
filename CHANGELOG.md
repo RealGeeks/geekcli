@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/RealGeeks/geekcli/compare/v0.10.0...v0.11.0) (2026-10-07)
+
+
+### Features
+
+* banners and market report pages ([#65](https://github.com/RealGeeks/geekcli/issues/65)) ([8d7f474](https://github.com/RealGeeks/geekcli/commit/8d7f474be6455377a27fa10b9205dddd0aae98f9))
+
 ## [0.10.0](https://github.com/RealGeeks/geekcli/compare/v0.9.0...v0.10.0) (2026-10-07)
 
 

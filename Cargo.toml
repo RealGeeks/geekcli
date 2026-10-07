@@ -1,6 +1,6 @@
 [package]
 name = "geekcli"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 rust-version = "1.88"
 description = "The Real Geeks command line: manage a Real Geeks website from scripts and AI agents"
