@@ -178,16 +178,7 @@ impl Fields {
             .set("sold_within", self.sold_within)
             .set("number_of_properties", self.number_of_properties);
         if let Some(parent) = &self.parent {
-            let value = match parse_id_or_null(parent) {
-                Ok(v) => v,
-                Err(_) => Value::from(
-                    pages::resolve_id(ctx, PATH, parent, "parent page").or_else(|first| {
-                        pages::resolve_id(ctx, pages::PATH, parent, "parent page")
-                            .map_err(|_| first)
-                    })?,
-                ),
-            };
-            payload.set_value("parent", value);
+            payload.set_value("parent", pages::resolve_parent(ctx, PATH, parent)?);
         }
         if let Some(content) = html::read_body(
             self.content.as_deref(),

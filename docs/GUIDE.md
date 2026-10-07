@@ -2,8 +2,9 @@
 
 `geekcli` is the Real Geeks command line. It works on one Real Geeks website at
 a time through the site's API (`/api/v3/`): blog posts and categories, content,
-area and agent pages, the home page, navigation, sidebars, footers, settings,
-design and files. This guide is the contract an automated caller can rely on.
+area, agent and market report pages, the home page, navigation, sidebars,
+footers, banners, settings, design and files. This guide is the contract an
+automated caller can rely on.
 
 The API itself is documented at <https://developers.realgeeks.com/content-api/>,
 with a [changelog](https://developers.realgeeks.com/content-api/changelog/) of
@@ -345,22 +346,24 @@ API reference: [Content pages](https://developers.realgeeks.com/content-api/site
 
 ## 9. Revisions and undo
 
-Content pages, agent landing pages, area pages, blog posts, footers and the
-home page keep a revision for every save that changes a tracked field. It is
-the same history as the admin's Versions page, and each revision is
-attributed to the API key that made it.
+Content pages, agent landing pages, market report pages, area pages, blog
+posts, footers and the home page keep a revision for every save that
+changes a tracked field. It is the same history as the admin's Versions
+page, and each revision is attributed to the API key that made it.
 
 | Resource | Tracked fields |
 | --- | --- |
 | content and agent pages | content, template, anchor text, sidebar, footer, search, search field defaults, search and listing headers, number and placement of listings, template areas (`--area`) |
 | area pages | the same as content pages except template and areas, plus `area_name` and `featured` |
+| market report pages | content, anchor text, footer, search, search field defaults, number of properties |
 | blog posts | title, slug, body, status, publish, page title, meta fields, Facebook image |
 | footers | content |
 | home page | title, meta description and keywords, content, sidebar, footer, search and listing fields, featured agents, listing display type |
 
 Changes to untracked fields (a page's slug, parent, title, meta fields,
-landscape image and search form type; the home page's landscape image; a
-post's categories) go into the
+landscape image, banner and search form type; a market report's `--header`
+and `--sold-within`; the home page's landscape image; a post's categories)
+go into the
 site's change log but cannot be undone here; re-read before overwriting
 those. Because a post's slug, status and publish date are tracked, reverting
 a post can change its URL or publish or unpublish it: preview first.
@@ -377,13 +380,14 @@ geekcli footers revisions "Default Footer"
 geekcli footers revert 1 530
 geekcli home-page revisions
 geekcli home-page revert 325
+geekcli market-reports revisions /riverside-market/
 ```
 
 A revert is itself a revision, so a mistaken revert is undone by reverting
 the revert. The creation revision cannot be reverted (exit 6, `conflict`);
 delete the object instead. Revision lists are not paginated; `--limit`
-trims them. Sidebars, nav bars, featured pages, categories, the blog
-landing page, settings, design and files have change logs but no undo.
+trims them. Sidebars, nav bars, banners, featured pages, categories, the
+blog landing page, settings, design and files have change logs but no undo.
 
 API reference: [Revisions and undo](https://developers.realgeeks.com/content-api/site-pages/#revisions-and-undo).
 

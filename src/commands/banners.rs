@@ -59,15 +59,18 @@ pub enum BannersSub {
 pub struct Fields {
     /// Internal name, unique per site
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub name: Option<String>,
     /// The text on the banner (150 characters at most)
     #[arg(long, value_name = "TEXT")]
     pub message: Option<String>,
     /// Where the button goes: a site path or an http(s), mailto or tel URL
     #[arg(long)]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub url: Option<String>,
     /// The button text (50 characters at most)
     #[arg(long, visible_alias = "cta", value_name = "TEXT")]
+    #[arg(help_heading = super::heading::REQUIRED)]
     pub call_to_action: Option<String>,
     /// Extra fields as a JSON object, `@file`, or `-` for stdin (flags win)
     #[arg(long, value_name = "JSON")]

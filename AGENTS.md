@@ -6,8 +6,9 @@ on a Real Geeks website; the second is for agents changing this repository.
 ## Using geekcli on a Real Geeks site
 
 `geekcli` is the Real Geeks command line. Today it manages a site's website
-content: blog posts and categories, content, area and agent pages, the home
-page, navigation, sidebars, footers, settings, design and uploaded files.
+content: blog posts and categories, content, area, agent and market report
+pages, the home page, navigation, sidebars, footers, banners, settings,
+design and uploaded files.
 
 Install:
 
@@ -50,7 +51,7 @@ The rules that keep a live site safe:
    asked: HTML was stripped, or a search value matched nothing. Fix it and
    write again. `--fail-on-warnings` turns them into exit 5.
 6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
-   page, post or footer, so a bad result is one `revert` away.
+   page, market report, post or footer, so a bad result is one `revert` away.
 7. Check search criteria with `search check --count --strict` before putting
    them on a page; the site silently drops criteria it does not know, and a
    value in the wrong case (`McLean` for `Mclean`) matches nothing.

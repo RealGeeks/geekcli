@@ -38,6 +38,7 @@ pub const DETAIL_COLUMNS: &[Column] = &[
     col("children", "/children_count"),
     col("sidebar", "/sidebar/name"),
     col("footer", "/footer/name"),
+    col("banner", "/banner/name"),
     col("search", "/search/description"),
     col("landscape", "/landscape_image_override"),
     col("agents", "/agents"),
@@ -645,7 +646,7 @@ pub fn find(ctx: &Context, resource_path: &str, reference: &str, label: &str) ->
 /// A parent given as id, null, path or slug. Paths are looked up on the
 /// same resource first, then the other tree resource, because a content
 /// page may sit under an area page and vice versa.
-fn resolve_parent(ctx: &Context, resource_path: &str, reference: &str) -> Result<Value> {
+pub(super) fn resolve_parent(ctx: &Context, resource_path: &str, reference: &str) -> Result<Value> {
     if let Ok(value) = parse_id_or_null(reference) {
         return Ok(value);
     }
