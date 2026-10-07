@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/RealGeeks/geekcli/compare/v0.11.0...v0.11.1) (2026-10-07)
+
+
+### Miscellaneous Chores
+
+* release 0.11.1 ([2d90e64](https://github.com/RealGeeks/geekcli/commit/2d90e6407ee1b2cc41a0e9de4678a6467f962fd7))
+
 ## [0.11.0](https://github.com/RealGeeks/geekcli/compare/v0.10.0...v0.11.0) (2026-10-07)
 
 
