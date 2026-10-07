@@ -68,7 +68,7 @@ pub enum SidebarsSub {
     Item { reference: String, item: u64 },
     /// Append an HTML item
     #[command(after_help = "Notes:
-  - <button>, <script> and non-YouTube iframes are stripped; make a button an <a> with display: inline-block, padding and background-color.
+  - <button>, <script> (except JSON-LD) and non-YouTube iframes are stripped; make a button an <a> with display: inline-block, padding and background-color.
   - Themes render the sidebar differently: a right column on molly, stacked full-width sections under the content on anna-modern.
   - Items with a data-domain are system widgets.")]
     AddHtml(HtmlArgs),

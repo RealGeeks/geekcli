@@ -936,18 +936,46 @@ These rules come from watching real pages break.
 
 **The sanitizer keeps** `p`, `br`, `hr`, `h1`–`h6`, lists, `a`, `img`,
 `strong`/`em`/`u`/`s`, `sub`/`sup`, `blockquote`, `pre`/`code`, tables,
-`div`, `span`, `figure`/`figcaption`, and `iframe` only for YouTube or
+`div`, `span`, `figure`/`figcaption`, `section`, `article`, `header`,
+`footer`, `nav`, `aside`, `main`, `address`, `details`/`summary`, `dl`,
+`time`, `small`, `mark`, `abbr`, `cite`, and `iframe` only for YouTube or
 Vimeo over https. Attributes: `class`, `id`, `style`, `title`, `href`,
-`target`, `rel`, `src`, `alt`, `width`, `height`, `loading`, table
-spans. **It drops** `script`, `style` blocks, `button`, forms and inputs,
-`video`/`audio`, `svg`, event handlers, `javascript:` links and any other
-attribute (a `number-of-tiles="three"` hook vanishes silently). Inline
-`style` keeps only: text-align, color, background-color, font-weight,
-font-style, font-size, text-decoration, width, height, max-width, margin*,
-padding*, float, display, border*, border-collapse, list-style-type,
-vertical-align, line-height. `min-width`, `letter-spacing`, `flex`, `grid`
-and `url(...)` are removed. Trailing semicolons and entities get
+`target`, `rel`, `src`, `srcset`, `sizes`, `alt`, `width`, `height`,
+`loading`, table spans, `role`, `aria-*`, `open`, `datetime` and the
+microdata attributes. **It drops** `script` (except JSON-LD, below),
+`button`, forms and inputs, `video`/`audio`, event handlers,
+`javascript:` links, `data-*` and any other attribute (a
+`number-of-tiles="three"` hook vanishes silently). Entities get
 normalised; that is not a change.
+
+**CSS.** A `<style>` block is kept as written: classes, `@media`, custom
+properties, flex and grid, `@font-face`. Inline `style` is kept too.
+
+- The CSS applies to the whole page, not just your content. Give every
+  class a prefix of your own (`.oak-card`, not `.card`) and never style
+  bare tags, `body` or the theme's own classes.
+- Put the `<style>` block first in the field, one block per page.
+- A block or a `style` attribute is dropped whole, with a warning that
+  says why, if it contains `javascript:`, `expression(`, `behavior:`,
+  `-moz-binding`, a `url()` or `@import` that is not http(s), relative or
+  an image/font `data:` URL, or anything that looks like an HTML tag
+  outside a comment. For an SVG background write the `data:` URL
+  percent-encoded (`%3Csvg ...`), and in a `<style>` block, not an inline
+  `style`.
+- Not in an agent page that is a featured agent on the home page: its
+  card shows the page's content with tags stripped, so CSS or JSON-LD
+  there would appear as text. Style those with inline `style` only.
+
+**Structured data.** `<script type="application/ld+json">` is kept if it
+is valid JSON, and comes back re-serialized (compact, with `\uXXXX`
+escapes), so do not expect it byte for byte. Microdata (`itemscope`,
+`itemprop`, `itemtype`, `<meta itemprop content>`) is kept as well. Mark
+up only what is visibly on the page, and check the page source for the
+site's own JSON-LD first so you do not duplicate it.
+
+**Inline SVG.** `<svg>` icons are kept: paths, shapes, text, gradients,
+`<use href="#id">`. Scripts, `<style>`, `<foreignObject>`, `<image>` and
+external references inside one are removed.
 
 **Characters.** The content columns are Windows-1252. Accented Latin
 letters, curly quotes, en and em dashes, `«»`, `·`, `©` and `€` are fine;
@@ -955,7 +983,8 @@ arrows, CJK text and emoji are not, and any field containing one is
 rejected with a 422 that names the characters (nothing is silently saved
 as `?`). Entities are decoded before the check, so `&#8594;` is rejected
 too, as are control characters. Use what the charset has: `&raquo;` (»)
-for an arrow, `&middot;` (·) for a separator, `--` for a dash.
+for an arrow, `&middot;` (·) for a separator, `--` for a dash. The same
+goes for CSS: write `content: "\2192"`, not the arrow itself.
 
 **Contact links.** Link to the site's contact form as
 `<a class="popup" href="/member/contact/">Contact Jordan</a>`. The `popup`
@@ -971,20 +1000,21 @@ color: #fff; text-decoration: none`.
 **Links.** Leave link colour to the theme, or they look like plain text.
 Only override colour on things that are deliberately not links.
 
-**Layout.** Themes have no grid helpers you can rely on and no
-`@media` rules apply to your inline styles. What survives: a centred
-container with `display: inline-block; width: 210px; margin: 6px;
-vertical-align: top` cards, which sit three across on desktop and stack on
-a phone. Tables do not wrap and overflow narrow screens. Give a row of
-cards the same `height` when their text lengths differ.
+**Layout.** Themes have no grid helpers you can rely on. For anything
+beyond a simple block, write classes in a `<style>` block and make it
+responsive with `@media`. Without one, a centred container with
+`display: inline-block; width: 210px; margin: 6px; vertical-align: top`
+cards sits three across on desktop and stacks on a phone. Tables do not
+wrap and overflow narrow screens.
 
 **Classes.** A class from another site (`icon-tiles`, `two_column`) does
-nothing unless this theme's stylesheet knows it. Assume it does not;
-style inline, then snapshot.
+nothing unless this theme's stylesheet knows it or your `<style>` block
+defines it. Assume the theme does not; then snapshot.
 
 **Icons.** Font Awesome 6 is loaded on the themes seen so far: `<em
 class="fa-solid fa-house"></em>` works; nothing else needs to be loaded.
-Verify with a snapshot, since this is a theme choice.
+Verify with a snapshot, since this is a theme choice. An inline `<svg>`
+works on every theme.
 
 **Images in content.** MLS listing photos may only appear with their
 listing, never as decoration. For area or lifestyle images use public
@@ -998,10 +1028,13 @@ caches by path. Headshots: flatten to white and resize to the same width.
 **Read-back rule.** Do not resend HTML you read unless you changed it;
 admin-authored markup the sanitizer would strip is left alone when the
 field is omitted. Appending to existing content re-sends the whole
-field, so anything the admin authored with `<button>`, `<script>` or an
+field, so anything the admin authored with `<button>`, a `<script>` that
+is not JSON-LD, a widget `<div>` that relies on `data-*` attributes or an
 iframe is stripped in the same save and can leave a dangling sentence
-("… today to find out how we can help!" minus its button). After such a
-save, read the content back and look for orphaned fragments.
+("… today to find out how we can help!" minus its button). Before
+editing a field, look for those in what you read, and tell your human
+what would be lost instead of saving. After a save, read the warnings
+and the content back and look for orphaned fragments.
 
 **Themes differ.** On molly the sidebar is a right column; on
 anna-modern it stacks under the content as full-width sections and some

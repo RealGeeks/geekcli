@@ -327,6 +327,11 @@ Highlights:
   before sending. `<!--read more-->` marks the summary break in posts. Content
   columns are Windows-1252: arrows, CJK text and emoji are rejected with a 422
   naming the character, so write those as entities (`&#8594;`).
+- **Your own CSS and schema markup**: the API keeps `<style>` blocks, inline
+  `style`, JSON-LD (`<script type="application/ld+json">`), microdata
+  attributes and inline `<svg>` in content, so a designed page can be edited
+  without losing them. Other scripts, event handlers and forms are still
+  removed and reported as warnings; `geekcli guide html` has the rules.
 - **Drafts by default**: `posts create` sends `status: draft` unless you pass
   `--status published`. The API itself defaults to published, which is the
   wrong default for automation.
