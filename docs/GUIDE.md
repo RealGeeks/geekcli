@@ -392,6 +392,8 @@ geekcli home-page get
 geekcli home-page update --search-header "Find your next home" --content-file home.html
 geekcli home-page update --page-heading "Riverside Homes for Sale"   # same field, alias
 geekcli home-page update --search-image https://u.realgeeks.media/<site>/images/badge.png
+geekcli home-page update --featured-agents /dana-whitfield/,/sam-ortiz/   # the agent cards
+geekcli home-page update --featured-agents null                          # no agent cards
 ```
 
 - `--search-header` (alias `--page-heading`, also on content and area
@@ -401,6 +403,18 @@ geekcli home-page update --search-image https://u.realgeeks.media/<site>/images/
 - The hero background is the page's `--landscape` (§15), or the sitewide
   `HEADER_IMAGE` setting when the page has none. `--search-image` is not a
   background: it renders as an image, logo-style, inside the hero.
+- `--featured-agents` sets the agent cards (photo and bio) on the home
+  page, and is always the full list: read it with `home-page get`, then
+  send it back with the agent added or left out. It takes Agent Detail
+  pages (§8) by id, path or slug; these are content pages (`pages list
+  --template "Agent Detail Page"`), not the CRM agents `geekcli agents`
+  lists, so an agent without such a page needs one first. The list picks
+  who is shown, not the order.
+- A card is built from the agent's page: the name is its `--title`, the bio
+  its content as plain text, the photo its `Agent Photo` area and the link
+  its slug. Fix a placeholder bio or a missing photo with `pages update`,
+  not here. Cards show on the anna-modern home page, and in the anna
+  sidebar when the `ENABLE_FEATURED_AGENTS_IN_SIDEBAR` setting is on.
 
 API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
 
@@ -1005,8 +1019,9 @@ CLI call; snapshot when done.
    A file value with a server path in front of `https://…` is corrupt; the bare URL
    fixes it.
 2. **Home page**: `home-page update` for title, meta, search header and
-   subheader, content, `--search-criteria` for the listings strip and
-   `--search-field-defaults-criteria` for the form's defaults.
+   subheader, content, `--search-criteria` for the listings strip,
+   `--search-field-defaults-criteria` for the form's defaults and
+   `--featured-agents` for the agent cards.
 3. **Navigation**: `nav get top_primary` and `bottom_primary`; update the
    agent link (`nav update top_primary "Meet Riley" --text … --url …`).
 4. **Sidebars**: `sidebars get "Default Sidebar"`. The agent card is
