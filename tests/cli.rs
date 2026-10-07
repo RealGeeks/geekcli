@@ -806,9 +806,9 @@ fn guide_topics_and_sections() {
         .stdout(predicate::str::contains("Windows-1252"));
 }
 
-/// The inline-style list in `posts create --help` matches `guide html`.
+/// `posts create --help` and `guide html` agree on what the sanitizer keeps.
 #[test]
-fn posts_create_help_lists_the_guide_inline_styles() {
+fn posts_create_help_agrees_with_the_guide_on_the_sanitizer() {
     let env = Env::new();
     let squash = |bytes: &[u8]| {
         String::from_utf8_lossy(bytes)
@@ -834,17 +834,11 @@ fn posts_create_help_lists_the_guide_inline_styles() {
             .stdout
             .clone(),
     );
-    let start = guide
-        .find("keeps only: ")
-        .expect("style list in guide html")
-        + 12;
-    let list = &guide[start..start + guide[start..].find('.').unwrap()];
-    let properties: Vec<&str> = list.split(", ").collect();
-    assert!(properties.len() > 15, "{list}");
-    for property in properties {
+    for kept in ["<style>", "JSON-LD", "svg", "microdata", "prefix"] {
+        assert!(guide.contains(kept), "guide html does not mention {kept}");
         assert!(
-            help.contains(property),
-            "posts create --help does not list {property}"
+            help.contains(kept),
+            "posts create --help does not mention {kept}"
         );
     }
 }

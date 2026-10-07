@@ -58,8 +58,8 @@ pub enum PagesSub {
     Get { reference: String },
     #[command(after_help = "Notes:
   - Content is sanitized like a post body (`geekcli guide html`).
-  - Themes have no grid helpers you can rely on: a row of cards is <div style=\"display: inline-block; width: 210px; margin: 6px; vertical-align: top\"> inside a centred container; tables overflow phones.
-  - Classes from another site (icon-tiles) do nothing unless this theme styles them.
+  - Themes have no grid helpers you can rely on: lay out with classes in a <style> block (page-wide, so prefix the names) and @media rules; tables overflow phones.
+  - Classes from another site (icon-tiles) do nothing unless this theme or your <style> block styles them.
   - Leave link colour to the theme.
   - Template areas (`templates list`): --area \"Agent Name=Jordan Avery\" --area \"Agent Photo=<file URL>\"; an About Page pulls in every Agent Detail Page automatically, so make agents pages, not cards.
   - Contact links: <a class=\"popup\" href=\"/member/contact/\"> opens the contact form as an overlay on designs that support it and works as a plain link elsewhere.
