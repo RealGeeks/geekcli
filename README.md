@@ -279,6 +279,7 @@ geekcli pages       list | get | create | update | delete | search | revisions |
 geekcli area-pages  list | get | create | update | delete | search | revisions | revision | revert
 geekcli agent-pages list | get | create | update | delete | revisions | revision | revert
 geekcli agents
+geekcli market-reports list | get | create | update | delete | revisions | revision | revert
 geekcli home-page   get | update | revisions | revision | revert
 geekcli templates   list
 geekcli search      fields | choices | check | run | url
@@ -286,6 +287,7 @@ geekcli nav         list | get | add | update | move | remove | set | clear
 geekcli sidebars    list | get | create | rename | delete | item | add-html | add-links |
                       update-item | move-item | remove-item | set-items
 geekcli footers     list | get | create | update | delete | revisions | revision | revert
+geekcli banners     list | get | create | update | delete
 geekcli featured    list | get | create | update | delete | add-tile | update-tile | remove-tile | set-tiles
 geekcli settings    list | groups | get | set | clear
 geekcli design      get | templates | variation | set | preview

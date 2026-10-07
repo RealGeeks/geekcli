@@ -87,12 +87,14 @@ src/
     ├── pages.rs       # content pages; TreeFields/TreeListArgs shared with area pages
     ├── area_pages.rs
     ├── agent_pages.rs # agent landing pages (+ `agents` CRM list); reuses pages helpers
+    ├── market_reports.rs # market report pages (search, sold_within, header); reuses pages helpers
     ├── home_page.rs
     ├── nav.rs         # navigation bar links (bars are fixed)
     ├── sidebars.rs    # sidebars and html/links items
     ├── footers.rs     # shared footer HTML blocks
     ├── settings.rs    # typed site settings; coerce() maps NAME=value text to JSON
     ├── design.rs      # template + colour scheme; preview link rendered via snapshot::render
+    ├── banners.rs     # banners; pages attach one with --banner (pages::AttachArgs)
     ├── featured.rs    # Featured Pages tile groups (anna-modern home page)
     ├── files.rs       # media bucket files; multipart upload via Client::post_multipart
     ├── snapshot.rs    # PNG of a page via an installed Chrome over DevTools (headless_chrome crate)

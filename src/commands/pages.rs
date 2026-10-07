@@ -267,6 +267,10 @@ pub struct AttachArgs {
     #[arg(long, value_name = "ID_NAME_OR_NULL")]
     #[arg(help_heading = super::heading::LAYOUT)]
     pub footer: Option<String>,
+    /// Banner to show across the top of the page: id, name, or `null` for none (see `banners`)
+    #[arg(long, value_name = "ID_NAME_OR_NULL")]
+    #[arg(help_heading = super::heading::LAYOUT)]
+    pub banner: Option<String>,
     /// Which search form the page shows: default or typeahead
     #[arg(long, value_name = "TYPE")]
     #[arg(help_heading = super::heading::SEARCH)]
@@ -318,6 +322,13 @@ impl AttachArgs {
                 Err(_) => Value::from(super::id_of(&super::footers::resolve(ctx, footer)?)?),
             };
             payload.set_value("footer", value);
+        }
+        if let Some(banner) = &self.banner {
+            let value = match parse_id_or_null(banner) {
+                Ok(v) => v,
+                Err(_) => Value::from(super::id_of(&super::banners::resolve(ctx, banner)?)?),
+            };
+            payload.set_value("banner", value);
         }
         if let Some(kind) = &self.search_form_type {
             payload.set("search_form_type", Some(kind.trim().to_ascii_lowercase()));

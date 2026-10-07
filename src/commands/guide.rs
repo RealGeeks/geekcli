@@ -178,6 +178,8 @@ mod tests {
             "settings",
             "files",
             "footers",
+            "banners",
+            "market",
             "workflow",
             "update",
         ] {
