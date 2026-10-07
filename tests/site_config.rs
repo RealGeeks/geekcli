@@ -1028,3 +1028,177 @@ fn page_heading_is_an_alias_for_search_header() {
         .stdout(predicate::str::contains("page-heading"))
         .stdout(predicate::str::contains("BIG_SEARCH_TITLE"));
 }
+
+#[test]
+fn banners_create_update_by_name_and_page_attach() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let post = server
+        .mock("POST", "/api/v3/content/banners/")
+        .match_body(Matcher::Json(json!({
+            "name": "Open house",
+            "message": "Open house Saturday",
+            "url": "/open-house/",
+            "call_to_action": "See details"
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":4,"name":"Open house","used_by":[],"used_by_count":0}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "banners",
+            "create",
+            "--name",
+            "Open house",
+            "--message",
+            "Open house Saturday",
+            "--url",
+            "/open-house/",
+            "--cta",
+            "See details",
+        ])
+        .assert()
+        .success();
+    post.assert();
+    cmd(&server, &dir)
+        .args(["banners", "create", "--name", "No button"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--url is required"));
+
+    server
+        .mock("GET", "/api/v3/content/banners/")
+        .with_body(r#"{"results":[{"id":4,"name":"Open house"}]}"#)
+        .expect_at_least(1)
+        .create();
+    server
+        .mock("GET", "/api/v3/content/banners/4/")
+        .with_body(r#"{"id":4,"name":"Open house","used_by":["buying"],"used_by_count":1}"#)
+        .expect_at_least(1)
+        .create();
+    let patch = server
+        .mock("PATCH", "/api/v3/content/banners/4/")
+        .match_body(Matcher::Json(json!({ "message": "Open house Sunday" })))
+        .with_body(r#"{"id":4,"name":"Open house","message":"Open house Sunday"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "banners",
+            "update",
+            "open house",
+            "--message",
+            "Open house Sunday",
+        ])
+        .assert()
+        .success();
+    patch.assert();
+
+    let attach = server
+        .mock("PATCH", "/api/v3/content/pages/7/")
+        .match_body(Matcher::Json(json!({ "banner": 4 })))
+        .with_body(r#"{"id":7,"path":"/buying/","url":"https://x/buying/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["pages", "update", "7", "--banner", "Open house"])
+        .assert()
+        .success();
+    attach.assert();
+    let detach = server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(json!({ "banner": null })))
+        .with_body(r#"{"id":1,"url":"https://x/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["home-page", "update", "--banner", "null"])
+        .assert()
+        .success();
+    detach.assert();
+
+    let delete = server
+        .mock("DELETE", "/api/v3/content/banners/4/")
+        .match_query(Matcher::UrlEncoded("force".into(), "true".into()))
+        .with_status(204)
+        .create();
+    cmd(&server, &dir)
+        .args(["banners", "delete", "4", "--force", "--yes"])
+        .assert()
+        .success();
+    delete.assert();
+}
+
+#[test]
+fn market_reports_create_update_and_require_a_search() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    cmd(&server, &dir)
+        .args([
+            "market-reports",
+            "create",
+            "--slug",
+            "riverside-market",
+            "--anchor-text",
+            "Riverside Market",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--search-criteria or --search"));
+
+    let post = server
+        .mock("POST", "/api/v3/content/market-report-pages/")
+        .match_body(Matcher::Json(json!({
+            "slug": "riverside-market",
+            "anchor_text": "Riverside Market",
+            "search": { "city": ["Riverside"] },
+            "header": "Riverside this month"
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":9,"path":"/riverside-market/","sold_within":6}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "market-reports",
+            "create",
+            "--slug",
+            "/riverside-market/",
+            "--anchor-text",
+            "Riverside Market",
+            "--search-criteria",
+            "city=Riverside",
+            "--header",
+            "Riverside this month",
+        ])
+        .assert()
+        .success();
+    post.assert();
+
+    let lookup = server
+        .mock("GET", "/api/v3/content/market-report-pages/")
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/riverside-market/".into(),
+        ))
+        .with_body(r#"{"results":[{"id":9,"path":"/riverside-market/"}]}"#)
+        .create();
+    let patch = server
+        .mock("PATCH", "/api/v3/content/market-report-pages/9/")
+        .match_body(Matcher::Json(json!({
+            "sold_within": 12,
+            "number_of_properties": 10
+        })))
+        .with_body(r#"{"id":9,"path":"/riverside-market/","sold_within":12}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "market-reports",
+            "update",
+            "/riverside-market/",
+            "--sold-within",
+            "12",
+            "--number-of-properties",
+            "10",
+        ])
+        .assert()
+        .success();
+    lookup.assert();
+    patch.assert();
+}

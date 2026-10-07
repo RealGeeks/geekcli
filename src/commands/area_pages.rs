@@ -31,6 +31,7 @@ pub const DETAIL_COLUMNS: &[Column] = &[
     col("level", "/level"),
     col("sidebar", "/sidebar/name"),
     col("footer", "/footer/name"),
+    col("banner", "/banner/name"),
     col("search", "/search/description"),
     col("landscape", "/landscape_image_override"),
 ];

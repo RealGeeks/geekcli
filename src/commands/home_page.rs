@@ -20,6 +20,7 @@ pub const COLUMNS: &[Column] = &[
     col("listing_header", "/listing_header"),
     col("sidebar", "/sidebar/name"),
     col("footer", "/footer/name"),
+    col("banner", "/banner/name"),
     col("search", "/search/description"),
     col("tile_group", "/tile_group/title"),
     col("featured_agents", "/featured_agents"),

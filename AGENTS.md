@@ -6,8 +6,9 @@ on a Real Geeks website; the second is for agents changing this repository.
 ## Using geekcli on a Real Geeks site
 
 `geekcli` is the Real Geeks command line. Today it manages a site's website
-content: blog posts and categories, content, area and agent pages, the home
-page, navigation, sidebars, footers, settings, design and uploaded files.
+content: blog posts and categories, content, area, agent and market report
+pages, the home page, navigation, sidebars, footers, banners, settings,
+design and uploaded files.
 
 Install:
 
@@ -50,7 +51,7 @@ The rules that keep a live site safe:
    asked: HTML was stripped, or a search value matched nothing. Fix it and
    write again. `--fail-on-warnings` turns them into exit 5.
 6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
-   page, post or footer, so a bad result is one `revert` away.
+   page, market report, post or footer, so a bad result is one `revert` away.
 7. Check search criteria with `search check --count --strict` before putting
    them on a page; the site silently drops criteria it does not know, and a
    value in the wrong case (`McLean` for `Mclean`) matches nothing.
@@ -87,12 +88,14 @@ src/
     ├── pages.rs       # content pages; TreeFields/TreeListArgs shared with area pages
     ├── area_pages.rs
     ├── agent_pages.rs # agent landing pages (+ `agents` CRM list); reuses pages helpers
+    ├── market_reports.rs # market report pages (search, sold_within, header); reuses pages helpers
     ├── home_page.rs
     ├── nav.rs         # navigation bar links (bars are fixed)
     ├── sidebars.rs    # sidebars and html/links items
     ├── footers.rs     # shared footer HTML blocks
     ├── settings.rs    # typed site settings; coerce() maps NAME=value text to JSON
     ├── design.rs      # template + colour scheme; preview link rendered via snapshot::render
+    ├── banners.rs     # banners; pages attach one with --banner (pages::AttachArgs)
     ├── featured.rs    # Featured Pages tile groups (anna-modern home page)
     ├── files.rs       # media bucket files; multipart upload via Client::post_multipart
     ├── snapshot.rs    # PNG of a page via an installed Chrome over DevTools (headless_chrome crate)

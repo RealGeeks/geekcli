@@ -2,8 +2,9 @@
 
 `geekcli` is the Real Geeks command line. It works on one Real Geeks website at
 a time through the site's API (`/api/v3/`): blog posts and categories, content,
-area and agent pages, the home page, navigation, sidebars, footers, settings,
-design and files. This guide is the contract an automated caller can rely on.
+area, agent and market report pages, the home page, navigation, sidebars,
+footers, banners, settings, design and files. This guide is the contract an
+automated caller can rely on.
 
 The API itself is documented at <https://developers.realgeeks.com/content-api/>,
 with a [changelog](https://developers.realgeeks.com/content-api/changelog/) of
@@ -167,8 +168,10 @@ Every resource has a numeric `id`. Commands also accept human references:
 | pages        | id, `/site/relative/path/`, or slug            |
 | area-pages   | id, `/path/`, or slug                          |
 | agent-pages  | id, `/path/`, or slug                          |
+| market-reports | id, `/path/`, or slug                        |
 | sidebars     | id or name                                     |
 | footers      | id or name                                     |
+| banners      | id or name                                     |
 | nav bars     | id or position (`top_primary`, …); links by id, text or URL |
 
 A slug that matches more than one page is an error; use the id or path.
@@ -343,22 +346,24 @@ API reference: [Content pages](https://developers.realgeeks.com/content-api/site
 
 ## 9. Revisions and undo
 
-Content pages, agent landing pages, area pages, blog posts, footers and the
-home page keep a revision for every save that changes a tracked field. It is
-the same history as the admin's Versions page, and each revision is
-attributed to the API key that made it.
+Content pages, agent landing pages, market report pages, area pages, blog
+posts, footers and the home page keep a revision for every save that
+changes a tracked field. It is the same history as the admin's Versions
+page, and each revision is attributed to the API key that made it.
 
 | Resource | Tracked fields |
 | --- | --- |
 | content and agent pages | content, template, anchor text, sidebar, footer, search, search field defaults, search and listing headers, number and placement of listings, template areas (`--area`) |
 | area pages | the same as content pages except template and areas, plus `area_name` and `featured` |
+| market report pages | content, anchor text, footer, search, search field defaults, number of properties |
 | blog posts | title, slug, body, status, publish, page title, meta fields, Facebook image |
 | footers | content |
 | home page | title, meta description and keywords, content, sidebar, footer, search and listing fields, featured agents, listing display type |
 
 Changes to untracked fields (a page's slug, parent, title, meta fields,
-landscape image and search form type; the home page's landscape image; a
-post's categories) go into the
+landscape image, banner and search form type; a market report's `--header`
+and `--sold-within`; the home page's landscape image; a post's categories)
+go into the
 site's change log but cannot be undone here; re-read before overwriting
 those. Because a post's slug, status and publish date are tracked, reverting
 a post can change its URL or publish or unpublish it: preview first.
@@ -375,13 +380,14 @@ geekcli footers revisions "Default Footer"
 geekcli footers revert 1 530
 geekcli home-page revisions
 geekcli home-page revert 325
+geekcli market-reports revisions /riverside-market/
 ```
 
 A revert is itself a revision, so a mistaken revert is undone by reverting
 the revert. The creation revision cannot be reverted (exit 6, `conflict`);
 delete the object instead. Revision lists are not paginated; `--limit`
-trims them. Sidebars, nav bars, featured pages, categories, the blog
-landing page, settings, design and files have change logs but no undo.
+trims them. Sidebars, nav bars, banners, featured pages, categories, the
+blog landing page, settings, design and files have change logs but no undo.
 
 API reference: [Revisions and undo](https://developers.realgeeks.com/content-api/site-pages/#revisions-and-undo).
 
@@ -1212,3 +1218,65 @@ stderr and an entry in `warnings` (§2). If it refuses the version
 `GEEKCLI_REPO=owner/name` updates from a fork, as it does for the install
 scripts. A binary built from source (`cargo install`) is replaced by the
 release build.
+
+## 28. Banners
+
+A banner is a one-line message with a button, shown across the top of the
+pages it is attached to: an open house, a new-listings alert, a seasonal
+offer. It is not the header image (that is `--landscape`, or the
+`HEADER_IMAGE` setting).
+
+```bash
+geekcli banners create --name "Open house" --message "Open house this Saturday, 1 to 4" \
+    --call-to-action "See details" --url /open-house/
+geekcli banners list
+geekcli pages update /buying/ --banner "Open house"       # show it on a page
+geekcli home-page update --banner "Open house"
+geekcli area-pages update /riverside/ --banner null       # take it off a page
+geekcli banners update "Open house" --message "Open house this Sunday, 1 to 4"
+geekcli banners get "Open house"                          # used_by: the pages showing it
+geekcli banners delete "Open house" --force
+```
+
+- A banner shows nowhere until a page uses it, and there is no site-wide
+  banner: set `--banner` on each content page, agent page, area page or the
+  home page that should show it. Market report pages have no banner.
+- Editing a banner changes it on every page that shows it. `--message` is
+  150 characters at most and `--call-to-action` (alias `--cta`) 50; keep
+  both short, the strip is one line on a phone.
+- `--url` is a site path or an http(s), mailto or tel URL.
+- Deleting a banner pages still show is a 409; `--force` takes it off them.
+- Snapshot a page after attaching one (`geekcli snapshot /buying/`).
+
+API reference: [Banners](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#banners).
+
+## 29. Market report pages
+
+A market report page shows market statistics and tables of active, pending
+and sold listings for one area, all generated from a search. They are
+separate from `pages`: neither list shows the other.
+
+```bash
+geekcli search check --count --strict city=Riverside
+geekcli market-reports create --slug riverside-market --anchor-text "Riverside Market Report" \
+    --search-criteria city=Riverside --header "Riverside this month" \
+    --title "Riverside Real Estate Market Report" --content-file intro.html
+geekcli market-reports list
+geekcli market-reports update /riverside-market/ --sold-within 12 --number-of-properties 10
+geekcli market-reports revisions /riverside-market/ --limit 1
+geekcli market-reports delete /riverside-market/
+```
+
+- A search is required and cannot be removed: without one there is no
+  report. Build it with `--search-criteria` and check the count first; a
+  search that matches nothing makes an empty report.
+- `--sold-within` is how many months of sold listings the Sold table
+  covers: 1 to 6, 12 or 18 (default 6). `--number-of-properties` is the
+  rows in each table, 1 to 50 (default 6).
+- `--header` is a line of text at the top of the report, above the sign-up
+  call to action. The page's own text is `--content`.
+- There are no template, sidebar, banner or landscape options. The page is
+  live as soon as it is created; link it from the navigation or an area
+  page so visitors find it.
+
+API reference: [Market report pages](https://developers.realgeeks.com/content-api/site-pages/#market-report-pages).

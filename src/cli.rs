@@ -5,9 +5,9 @@ use clap_complete::Shell;
 
 use crate::client::Client;
 use crate::commands::{
-    agent_pages, api, area_pages, auth, blog_home, categories, design, featured, files, footers,
-    guide, home_page, inspect, nav, pages, posts, search, settings, sidebars, snapshot, templates,
-    update, Context,
+    agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured, files,
+    footers, guide, home_page, inspect, market_reports, nav, pages, posts, search, settings,
+    sidebars, snapshot, templates, update, Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -122,6 +122,9 @@ pub enum Command {
     AgentPages(agent_pages::AgentPagesCommand),
     /// The site's CRM agents, for --agent-id
     Agents,
+    /// Market report pages (statistics and listing tables for one search)
+    #[command(name = "market-reports")]
+    MarketReports(market_reports::MarketReportsCommand),
     /// The site's home page
     #[command(name = "home-page")]
     HomePage(home_page::HomePageCommand),
@@ -133,6 +136,8 @@ pub enum Command {
     Sidebars(sidebars::SidebarsCommand),
     /// Footers (shared HTML blocks)
     Footers(footers::FootersCommand),
+    /// Banners (a message strip with a button across the top of a page)
+    Banners(banners::BannersCommand),
     /// Featured Pages tile groups for the anna-modern home page
     Featured(featured::FeaturedCommand),
     /// Site settings
@@ -214,12 +219,14 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::AreaPages(cmd) => area_pages::run(&ctx, cmd),
                 Command::AgentPages(cmd) => agent_pages::run(&ctx, cmd),
                 Command::Agents => agent_pages::agents(&ctx),
+                Command::MarketReports(cmd) => market_reports::run(&ctx, cmd),
                 Command::HomePage(cmd) => home_page::run(&ctx, cmd),
                 Command::Templates(cmd) => templates::run(&ctx, &cmd),
                 Command::Search(cmd) => search::run(&ctx, cmd),
                 Command::Nav(cmd) => nav::run(&ctx, cmd),
                 Command::Sidebars(cmd) => sidebars::run(&ctx, cmd),
                 Command::Footers(cmd) => footers::run(&ctx, cmd),
+                Command::Banners(cmd) => banners::run(&ctx, cmd),
                 Command::Featured(cmd) => featured::run(&ctx, cmd),
                 Command::Settings(cmd) => settings::run(&ctx, cmd),
                 Command::Design(cmd) => design::run(&ctx, cmd),
