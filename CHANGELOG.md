@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/RealGeeks/geekcli/compare/v0.9.0...v0.10.0) (2026-10-07)
+
+
+### Features
+
+* **home-page:** set the featured agents with --featured-agents ([#63](https://github.com/RealGeeks/geekcli/issues/63)) ([e6377cb](https://github.com/RealGeeks/geekcli/commit/e6377cb5999ed4206a2227a680d08b4e0c1d66f0))
+
 ## [0.9.0](https://github.com/RealGeeks/geekcli/compare/v0.8.0...v0.9.0) (2026-10-03)
 
 
