@@ -91,6 +91,22 @@ pub enum SidebarsSub {
         #[arg(long, value_name = "JSON")]
         data: String,
     },
+    /// List a sidebar's revisions, newest first
+    Revisions {
+        /// Sidebar id or name
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { reference: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Revisions track the name and the whole item list (each item and their order). One request is one revision, so `set-items` is undone in one step.
+  - Items a revert brings back are new rows with new ids; items that still exist keep theirs. Read the ids again before `update-item`.
+  - 409 (exit 6) when another sidebar now has the earlier name. A deleted sidebar cannot be brought back.")]
+    Revert { reference: String, rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -339,6 +355,21 @@ pub fn run(ctx: &Context, cmd: SidebarsCommand) -> Result<()> {
             let id = id_of(&resolve(ctx, &reference)?)?;
             let updated = replace_items(ctx, id, &read_items_json(&data)?)?;
             print_sidebar(ctx, &updated)
+        }
+        SidebarsSub::Revisions { reference, limit } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::list(ctx, &detail_path(id), limit)
+        }
+        SidebarsSub::Revision { reference, rev } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::show(ctx, &detail_path(id), rev)
+        }
+        SidebarsSub::Revert { reference, rev } => {
+            let sidebar = resolve(ctx, &reference)?;
+            let id = id_of(&sidebar)?;
+            let label = format!("sidebar {id} \"{}\"", cell(&sidebar["name"]));
+            let restored = super::revisions::revert_request(ctx, &detail_path(id), rev, &label)?;
+            print_sidebar(ctx, &restored)
         }
     }
 }

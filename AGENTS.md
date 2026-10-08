@@ -51,7 +51,10 @@ The rules that keep a live site safe:
    asked: HTML was stripped, or a search value matched nothing. Fix it and
    write again. `--fail-on-warnings` turns them into exit 5.
 6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
-   page, market report, post or footer, so a bad result is one `revert` away.
+   page, market report, post, footer, sidebar or navigation bar (and
+   `settings revisions` / `design revisions` before those), so a bad result
+   is one `revert` away. A deleted or overwritten file comes back with
+   `files restore` for 90 days.
 7. Check search criteria with `search check --count --strict` before putting
    them on a page; the site silently drops criteria it does not know, and a
    value in the wrong case (`McLean` for `Mclean`) matches nothing.
@@ -97,11 +100,11 @@ src/
     ├── design.rs      # template + colour scheme; preview link rendered via snapshot::render
     ├── banners.rs     # banners; pages attach one with --banner (pages::AttachArgs)
     ├── featured.rs    # Featured Pages tile groups (anna-modern home page)
-    ├── files.rs       # media bucket files; multipart upload via Client::post_multipart
+    ├── files.rs       # media bucket files; multipart upload via Client::post_multipart; versions/deleted/restore
     ├── snapshot.rs    # PNG of a page via an installed Chrome over DevTools (headless_chrome crate)
     ├── inspect.rs     # DOM queries and assertions on a rendered page, same browser
     ├── templates.rs
-    ├── revisions.rs   # revision list/preview/revert shared by pages, agent pages, home page
+    ├── revisions.rs   # revision list/preview/revert shared by every resource with undo (pages … settings, design)
     ├── search.rs      # property search (/api/v2/search/): fields, check, run, url, saved-search lookup
     ├── guide.rs       # `guide [topic]` over docs/GUIDE.md
     ├── update.rs      # self-update from the GitHub release archives (self_update crate, its own client)

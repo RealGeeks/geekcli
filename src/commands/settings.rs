@@ -48,6 +48,24 @@ pub enum SettingsSub {
     },
     /// List the setting groups
     Groups,
+    /// List changes to the site's settings, newest first
+    #[command(after_help = "Notes:
+  - Taken from the site's settings history: every change to a setting this API exposes, whoever made it (the admin, support, this CLI), over the site's most recent 500 settings saves.
+  - `changed` lists the setting names that save touched; one `settings set` with several pairs is one revision.")]
+    Revisions {
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    #[command(after_help = "Notes:
+  - A null (blank in the table) value means the site had no value of its own, so a revert returns the setting to its inherited default.")]
+    Revision { rev: u64 },
+    /// Undo a settings revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Only the settings that revision and later ones changed go back; the rest are untouched.
+  - The revert is validated like `settings set`: 409 (exit 6) when the earlier values are no longer accepted, with the setting named in `fields`, or when there is nothing left to undo.")]
+    Revert { rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -148,6 +166,23 @@ pub fn run(ctx: &Context, cmd: SettingsCommand) -> Result<()> {
                 .map(|n| (n.trim().to_ascii_uppercase(), Value::Null))
                 .collect();
             apply(ctx, &Value::Object(body))
+        }
+        SettingsSub::Revisions { limit } => super::revisions::list(ctx, PATH, limit),
+        SettingsSub::Revision { rev } => {
+            super::revisions::show(ctx, PATH, rev)?;
+            ctx.printer.note(
+                "A blank value means the site had no value of its own (the inherited default).",
+            );
+            Ok(())
+        }
+        SettingsSub::Revert { rev } => {
+            let response = super::revisions::revert_request(ctx, PATH, rev, "the site settings")?;
+            let rows = response
+                .get("results")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            ctx.printer.list(&rows, None, COLUMNS)
         }
     }
 }

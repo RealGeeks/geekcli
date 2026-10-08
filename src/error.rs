@@ -104,6 +104,9 @@ impl Error {
                 ("crm_unavailable" | "design_catalogue_unavailable" | "files_unavailable", _) => {
                     Some("a service behind the site is down; retry in a minute")
                 }
+                ("file_history_unavailable", _) => Some(
+                    "file version history cannot be read for this site, so nothing was restored; if it persists, report it to Real Geeks support",
+                ),
                 (_, 413) => Some(
                     "the request body is too large; upload files with `files upload` and keep JSON bodies small",
                 ),
@@ -262,6 +265,11 @@ mod tests {
             .is_some_and(|h| h.contains("auth login")));
         assert!(api(403, "api_disabled").hint().is_some());
         assert!(api(502, "crm_unavailable").hint().is_some());
+        assert!(api(503, "file_history_unavailable")
+            .hint()
+            .is_some_and(|h| h.contains("version history")));
+        assert_eq!(api(503, "file_history_unavailable").exit_code(), 1);
+        assert_eq!(api(502, "files_unavailable").exit_code(), 1);
         assert!(api(413, "payload_too_large").hint().is_some());
         assert!(api(405, "method_not_allowed")
             .hint()

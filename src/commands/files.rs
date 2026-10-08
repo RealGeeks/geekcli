@@ -84,7 +84,48 @@ pub enum FilesSub {
         overwrite: bool,
     },
     /// Delete a file, or a folder and everything in it
+    #[command(after_help = "Notes:
+  - A delete from the last 90 days can be undone: `files restore <path>` brings a file back at the same URL, and a deleted folder with what was deleted with it. `files deleted [folder]` lists what can come back.")]
     Delete { path: String },
+    /// List a file's versions from the last 90 days, newest first
+    #[command(after_help = "Notes:
+  - Shows the file's current state and the versions that were replaced or deleted in the last 90 days. What counts is when a version was replaced or deleted, not when it was uploaded.
+  - `action` is saved or deleted; `restorable` versions can be passed to `files restore <path> --version-id <id>`. The current version and delete markers are not restorable.
+  - -q prints the version ids. 404 (exit 4) when no file has been at that path.")]
+    Versions {
+        /// File path, e.g. images/logo.png
+        path: String,
+    },
+    /// List the files and folders deleted under a folder (any depth) that can be restored
+    #[command(after_help = "Notes:
+  - Only deletes from the last 90 days are listed, including ones made in the admin's Manage Files page.
+  - -q prints the paths, ready for `files restore`.")]
+    Deleted {
+        /// Folder path, e.g. images; the root when omitted
+        path: Option<String>,
+        /// Continue a listing from a previous `next_cursor`
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
+        /// Fetch every page
+        #[arg(long, conflicts_with = "cursor")]
+        all: bool,
+    },
+    /// Undo a delete or an overwrite: bring a file (or a deleted folder) back at the same URL
+    #[command(after_help = "Notes:
+  - Without --version-id it restores the version before the current state: the file as it was before it was deleted or replaced. --version-id (alias --version) takes a `version_id` from `files versions`.
+  - With a deleted folder's path it restores the folder and what was deleted with it (not files removed from it earlier). When the result says `incomplete`, a very large folder was only partly restored: run `files deleted <folder>` and restore the sub-folders still listed.
+  - Only the last 90 days can be restored. 409 (exit 6): the delete or overwrite is older, there is nothing to restore, or that version is already current. 404 (exit 4): no such file or version.
+  - A restore adds a new version and removes none, so it can be undone the same way. A moved file is undone with `files move` back.
+  - The CDN caches by path: a restored file can keep showing the replaced one for a while.")]
+    // `--version` here is the file version, not geekcli's
+    #[command(disable_version_flag = true)]
+    Restore {
+        /// File path, or the path of a deleted folder
+        path: String,
+        /// Version to bring back (from `files versions`); default: the one before the current state
+        #[arg(long, visible_alias = "version", value_name = "ID")]
+        version_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -176,7 +217,150 @@ pub fn run(ctx: &Context, cmd: FilesCommand) -> Result<()> {
             }
             Ok(())
         }
+        FilesSub::Versions { path } => versions(ctx, &path),
+        FilesSub::Deleted { path, cursor, all } => {
+            deleted(ctx, path.as_deref(), cursor.as_deref(), all)
+        }
+        FilesSub::Restore { path, version_id } => restore(ctx, &path, version_id.as_deref()),
     }
+}
+
+pub const VERSION_COLUMNS: &[Column] = &[
+    col("version_id", "/version_id"),
+    col("at", "/at"),
+    col("action", "/action"),
+    col("size", "/size"),
+    col("current", "/current"),
+    col("restorable", "/restorable"),
+];
+
+pub const DELETED_COLUMNS: &[Column] = &[
+    col("type", "/type"),
+    col("path", "/path"),
+    col("deleted_at", "/deleted_at"),
+];
+
+fn results_of(body: &Value, key: &str) -> Vec<Value> {
+    body.get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn print_lines(rows: &[Value], key: &str) {
+    for row in rows {
+        println!("{}", row.get(key).and_then(Value::as_str).unwrap_or(""));
+    }
+}
+
+/// `files versions <path>`: the file's current state and what a delete or
+/// overwrite in the last 90 days replaced.
+fn versions(ctx: &Context, path: &str) -> Result<()> {
+    let path = normalize(path);
+    if path.is_empty() {
+        return Err(Error::Usage("a file path is required".into()));
+    }
+    let query: Query = vec![("path".into(), path)];
+    let body = ctx.client.get(&format!("{PATH}versions/"), &query)?.body;
+    let rows = results_of(&body, "results");
+    if ctx.printer.quiet {
+        print_lines(&rows, "version_id");
+        return Ok(());
+    }
+    if ctx.printer.format == Format::Table {
+        ctx.printer.note(&format!("/{}", cell(&body["path"])));
+        return ctx.printer.list(&rows, None, VERSION_COLUMNS);
+    }
+    ctx.printer.raw(&body)
+}
+
+/// `files deleted [folder]`: what is deleted under a folder and can still
+/// be restored, paged like `files list`.
+fn deleted(ctx: &Context, path: Option<&str>, cursor: Option<&str>, all: bool) -> Result<()> {
+    let folder = normalize(path.unwrap_or(""));
+    let query: Query = vec![("path".into(), folder.clone())];
+    let mut entries: Vec<Value> = Vec::new();
+    let mut cursor = cursor.map(str::to_string);
+    loop {
+        let mut q = query.clone();
+        if let Some(c) = &cursor {
+            q.push(("cursor".into(), c.clone()));
+        }
+        let response = ctx.client.get(&format!("{PATH}deleted/"), &q)?.body;
+        entries.extend(results_of(&response, "results"));
+        cursor = response
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if !all || cursor.is_none() {
+            break;
+        }
+    }
+    if ctx.printer.quiet {
+        print_lines(&entries, "path");
+        return Ok(());
+    }
+    match ctx.printer.format {
+        Format::Table => {
+            ctx.printer.note(&format!("deleted under /{folder}"));
+            ctx.printer.list(&entries, None, DELETED_COLUMNS)?;
+            if let Some(c) = cursor {
+                ctx.printer.note(&format!("more entries: --cursor {c}"));
+            }
+            Ok(())
+        }
+        Format::Json | Format::Jsonl => ctx.printer.raw(&json!({
+            "path": folder,
+            "results": entries,
+            "next_cursor": cursor,
+        })),
+    }
+}
+
+/// `files restore <path> [--version ID]`: undo a delete or an overwrite.
+fn restore(ctx: &Context, path: &str, version: Option<&str>) -> Result<()> {
+    let path = normalize(path);
+    if path.is_empty() {
+        return Err(Error::Usage("a path is required".into()));
+    }
+    let mut body = json!({ "path": path });
+    if let Some(version) = version {
+        body["version_id"] = json!(version.trim());
+    }
+    let response = ctx.client.post(&format!("{PATH}restore/"), &body)?.body;
+    let restored = results_of(&response, "restored");
+    let incomplete = response
+        .get("incomplete")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    ctx.printer.note(&format!(
+        "Restored {path} ({} entr{}); a restore can be undone the same way.",
+        restored.len(),
+        if restored.len() == 1 { "y" } else { "ies" }
+    ));
+    if incomplete {
+        // in every mode, like API warnings: with -q it is the only sign
+        eprintln!(
+            "warning: incomplete: only part of {path} was restored. Run `geekcli files deleted {path}` and restore the folders still listed."
+        );
+    }
+    if ctx.printer.quiet {
+        for entry in &restored {
+            println!(
+                "{}",
+                entry
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_else(|| entry.get("path").and_then(Value::as_str).unwrap_or(""))
+            );
+        }
+        return Ok(());
+    }
+    if ctx.printer.format == Format::Table {
+        let rows: Vec<Value> = restored.iter().map(with_dimensions).collect();
+        return ctx.printer.list(&rows, None, COLUMNS);
+    }
+    ctx.printer.raw(&response)
 }
 
 /// Trim slashes so `images/` and `/images` both mean `images`.

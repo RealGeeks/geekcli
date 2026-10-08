@@ -42,8 +42,10 @@ A Real Geeks website can be run by the AI tools you already use:
   English, or let a coding agent such as Claude Code or Codex drive geekcli.
   Either way the site owner approves access in the site's own admin, chooses
   what it may change, and can revoke it at any time.
-- **Safety rails built in.** New posts start as drafts, pages and posts keep a
-  revision history with one-command undo, design changes can be previewed
+- **Safety rails built in.** New posts start as drafts, almost every change
+  (pages, posts, navigation, sidebars, settings, design) keeps a revision
+  history with one-command undo, deleted or overwritten files can be
+  restored for 90 days, design changes can be previewed
   before they go live, and every change is recorded with the key that made it.
   When something is saved but probably isn't what was meant, the response
   says so instead of failing silently.
@@ -255,10 +257,17 @@ agents to work that way.
 
 - **Drafts first**: new posts stay drafts until `geekcli posts publish`.
   Drafts and scheduled posts are not visible to visitors or search engines.
-- **Undo**: pages, area and agent pages, posts, footers and the home page keep
-  a history. `geekcli pages revisions /buying/` lists versions and
-  `geekcli pages revert /buying/ <id>` goes back to one; the same works for
-  `posts`, `area-pages`, `agent-pages`, `footers` and `home-page`.
+- **Undo**: pages, area and agent pages, market reports, posts, footers, the
+  home page, sidebars, navigation bars, Featured Pages groups, banners,
+  settings and design all keep a history. `geekcli pages revisions /buying/`
+  lists versions and `geekcli pages revert /buying/ <id>` goes back to one;
+  the same three subcommands work in every one of those groups
+  (`geekcli settings revert <id>`, `geekcli nav revert top_primary <id>`).
+- **Files come back**: a file deleted or overwritten in the last 90 days is
+  restored at the same URL with `geekcli files restore images/logo.png`;
+  `geekcli files deleted` lists what can be. Deleting anything other than a
+  file is permanent, and blog categories and the blog landing page keep no
+  history.
 - **Preview design changes**: `geekcli design preview` returns a link that
   shows a new template or color scheme without saving it.
 - **Warnings**: when a write is saved but probably not what you meant (a city
@@ -285,15 +294,19 @@ geekcli market-reports list | get | create | update | delete | revisions | revis
 geekcli home-page   get | update | revisions | revision | revert
 geekcli templates   list
 geekcli search      fields | choices | check | run | url
-geekcli nav         list | get | add | update | move | remove | set | clear
+geekcli nav         list | get | add | update | move | remove | set | clear |
+                      revisions | revision | revert
 geekcli sidebars    list | get | create | rename | delete | item | add-html | add-links |
-                      update-item | move-item | remove-item | set-items
+                      update-item | move-item | remove-item | set-items |
+                      revisions | revision | revert
 geekcli footers     list | get | create | update | delete | revisions | revision | revert
-geekcli banners     list | get | create | update | delete
-geekcli featured    list | get | create | update | delete | add-tile | update-tile | remove-tile | set-tiles
-geekcli settings    list | groups | get | set | clear
-geekcli design      get | templates | variation | set | preview
-geekcli files       list | get | url | upload | mkdir | move | delete
+geekcli banners     list | get | create | update | delete | revisions | revision | revert
+geekcli featured    list | get | create | update | delete | add-tile | update-tile | remove-tile | set-tiles |
+                      revisions | revision | revert
+geekcli settings    list | groups | get | set | clear | revisions | revision | revert
+geekcli design      get | templates | variation | set | preview | revisions | revision | revert
+geekcli files       list | get | url | upload | mkdir | move | delete |
+                      versions | deleted | restore
 geekcli snapshot    [PATH] [--full|--mobile] [--selector CSS] [--out FILE]
 geekcli inspect     [PATH] --text|--html|--attr|--count|--exists|--visible|--js|--assert …
 geekcli api         METHOD PATH [-p k=v] [-d JSON]
@@ -336,8 +349,13 @@ Highlights:
   `--status published`. The API itself defaults to published, which is the
   wrong default for automation.
 - **Undo**: `revisions`, `revision <ref> <id>` and `revert <ref> <id>` list,
-  preview and undo saves on pages, agent pages, area pages, blog posts,
-  footers and the home page.
+  preview and undo saves on pages, agent pages, area pages, market reports,
+  blog posts, footers, the home page, sidebars, navigation bars, Featured
+  Pages groups and banners; `settings` and `design` have the same three
+  without a `<ref>`. `files versions`, `files deleted` and `files restore`
+  undo a file delete or overwrite from the last 90 days. A revert that can
+  no longer be applied (the URL or name is taken, the template is gone)
+  exits 6.
 - **Partial updates**: `update` sends a PATCH with only the flags you passed.
   `--replace` sends a PUT. `--data '{...}'`, `--data @file.json` or
   `--data -` merges arbitrary fields.

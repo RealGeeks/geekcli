@@ -108,8 +108,8 @@ pub enum PostsSub {
     Revision { reference: String, rev: u64 },
     /// Undo a revision and everything after it (the revert is itself undoable)
     #[command(after_help = "Notes:
-  - Revisions track title, slug, body, status, publish, page_title, meta_* and facebook_image, so a revert can change the post's URL or publish/unpublish it. Check `posts revision <ref> <rev>` first.
-  - Category changes are not tracked; a revert leaves categories as they are.")]
+  - Revisions track every writable field, including slug, status, publish, categories and the comment switches, so a revert can change the post's URL, publish or unpublish it, or move it between categories. Check `posts revision <ref> <rev>` first.
+  - 409 (exit 6) when another post now has the earlier slug.")]
     Revert { reference: String, rev: u64 },
 }
 
