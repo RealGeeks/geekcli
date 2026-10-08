@@ -97,6 +97,9 @@ pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
         ("update", "updating geekcli"),
         ("upgrade", "updating geekcli"),
         ("version", "updating geekcli"),
+        ("revert", "revisions and undo"),
+        ("history", "revisions and undo"),
+        ("restore", "files"),
     ];
     let needle = aliases
         .iter()

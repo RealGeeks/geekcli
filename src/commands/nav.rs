@@ -74,6 +74,21 @@ pub enum NavSub {
     },
     /// Remove every link from a bar
     Clear { bar: String },
+    /// List a bar's revisions, newest first
+    Revisions {
+        /// Bar id or position (top_primary, bottom_primary, …)
+        bar: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { bar: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Revisions track the bar's whole link list and its order. One request is one revision, so `nav set` and `nav clear` are undone in one step.
+  - Links a revert brings back are new rows with new ids; links that still exist keep theirs. Read the ids again before `nav update`.")]
+    Revert { bar: String, rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -182,6 +197,20 @@ pub fn run(ctx: &Context, cmd: NavCommand) -> Result<()> {
             let updated = replace_links(ctx, &bar, &[])?;
             print_bar(ctx, &updated)
         }
+        NavSub::Revisions { bar, limit } => {
+            let bar = resolve(ctx, &bar)?;
+            super::revisions::list(ctx, &detail_path(&bar)?, limit)
+        }
+        NavSub::Revision { bar, rev } => {
+            let bar = resolve(ctx, &bar)?;
+            super::revisions::show(ctx, &detail_path(&bar)?, rev)
+        }
+        NavSub::Revert { bar, rev } => {
+            let bar = resolve(ctx, &bar)?;
+            let restored =
+                super::revisions::revert_request(ctx, &detail_path(&bar)?, rev, &label(&bar))?;
+            print_bar(ctx, &restored)
+        }
     }
 }
 
@@ -216,6 +245,10 @@ fn bar_links(bar: &Value) -> Vec<Value> {
 
 fn bar_id(bar: &Value) -> Result<u64> {
     super::id_of(bar)
+}
+
+fn detail_path(bar: &Value) -> Result<String> {
+    Ok(format!("{PATH}{}/", bar_id(bar)?))
 }
 
 fn link_path(bar: &Value, link: u64) -> Result<String> {

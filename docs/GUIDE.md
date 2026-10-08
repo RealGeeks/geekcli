@@ -128,12 +128,12 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | Code | Meaning                                                 |
 | ---- | ------------------------------------------------------- |
 | 0    | success                                                 |
-| 1    | other failure, including a temporary outage behind the site (`crm_unavailable`, `design_catalogue_unavailable`, `files_unavailable`): retry later |
+| 1    | other failure, including a temporary outage behind the site (`crm_unavailable`, `design_catalogue_unavailable`, `files_unavailable`): retry later. Also `file_history_unavailable` (503): file versions cannot be read for the site, so nothing was restored (§19) |
 | 2    | usage error (bad flags, missing required field)         |
 | 3    | not logged in, invalid key, key lacks the scope, or the site's API is off (`api_disabled`: Real Geeks enables it per site) |
 | 4    | not found                                               |
 | 5    | validation error (see `fields`), bad request, or a body too large (413); with `--fail-on-warnings`, the API returned warnings (code `warnings`; the request succeeded and any write was applied) |
-| 6    | conflict: a guarded delete (the message names the flag), or two writes raced on the same slug or name (retry) |
+| 6    | conflict: a guarded delete (the message names the flag), two writes raced on the same slug or name (retry), or a `revert` / `files restore` that can no longer be applied (§9, §19) |
 | 7    | rate limited after retries (`retry_after` seconds)      |
 | 8    | network error                                           |
 | 9    | this geekcli is too old for the site's API (`client_too_old`, or HTTP 426): run `geekcli update`, then run the command again (§27) |
@@ -346,27 +346,30 @@ API reference: [Content pages](https://developers.realgeeks.com/content-api/site
 
 ## 9. Revisions and undo
 
-Content pages, agent landing pages, market report pages, area pages, blog
-posts, footers and the home page keep a revision for every save that
-changes a tracked field. It is the same history as the admin's Versions
-page, and each revision is attributed to the API key that made it.
+Almost everything geekcli can change can be undone. Each resource below
+keeps a revision for every save, and its command group has the same three
+subcommands: `revisions` (list), `revision` (preview) and `revert` (undo).
 
-| Resource | Tracked fields |
-| --- | --- |
-| content and agent pages | content, template, anchor text, sidebar, footer, search, search field defaults, search and listing headers, number and placement of listings, template areas (`--area`) |
-| area pages | the same as content pages except template and areas, plus `area_name` and `featured` |
-| market report pages | content, anchor text, footer, search, search field defaults, number of properties |
-| blog posts | title, slug, body, status, publish, page title, meta fields, Facebook image |
-| footers | content |
-| home page | title, meta description and keywords, content, sidebar, footer, search and listing fields, featured agents, listing display type |
+| Resource | Commands | What a revision covers |
+| --- | --- | --- |
+| content, agent and market report pages | `pages`, `agent-pages`, `market-reports` | every writable field, including slug, parent, title, meta fields, banner, the landscape image and `agent_id` |
+| area pages | `area-pages` | every writable field |
+| home page | `home-page` | every writable field |
+| blog posts | `posts` | every writable field, including categories and the comment switches |
+| footers | `footers` | content |
+| sidebars | `sidebars` | the name and the whole item list: each item, and their order |
+| navigation bars | `nav` | the whole link list and its order |
+| Featured Pages groups | `featured` | title, blurb and the whole tile list |
+| banners | `banners` | every field |
+| site settings | `settings` | the settings that save changed |
+| design | `design` | `template` and `styles` (the colour scheme and its variables) |
 
-Changes to untracked fields (a page's slug, parent, title, meta fields,
-landscape image, banner and search form type; a market report's `--header`
-and `--sold-within`; the home page's landscape image; a post's categories)
-go into the
-site's change log but cannot be undone here; re-read before overwriting
-those. Because a post's slug, status and publish date are tracked, reverting
-a post can change its URL or publish or unpublish it: preview first.
+For content this is the same history as the admin's Versions page, so
+changes made in the admin appear here and can be reverted here, and the
+other way round. One request is one revision, however much it changes:
+`sidebars set-items` or `nav set` is undone in one step. Each revision is
+attributed to the person and the API key that made it (`by.name`,
+`by.api_key`; admin edits have no key).
 
 ```bash
 geekcli pages revisions /buying/ --limit 5     # newest first: id, when, who, fields
@@ -381,13 +384,87 @@ geekcli footers revert 1 530
 geekcli home-page revisions
 geekcli home-page revert 325
 geekcli market-reports revisions /riverside-market/
+geekcli sidebars revisions "Blog Sidebar" --limit 5
+geekcli sidebars revert "Blog Sidebar" 712     # name and items back as they were
+geekcli nav revisions top_primary
+geekcli nav revision top_primary 733           # the links now and after a revert
+geekcli nav revert top_primary 733
+geekcli featured revisions "Where We Live"
+geekcli featured revert "Where We Live" 741
+geekcli banners revisions "Open house"
+geekcli banners revert "Open house" 750
 ```
 
-A revert is itself a revision, so a mistaken revert is undone by reverting
-the revert. The creation revision cannot be reverted (exit 6, `conflict`);
-delete the object instead. Revision lists are not paginated; `--limit`
-trims them. Sidebars, nav bars, banners, featured pages, categories, the
-blog landing page, settings, design and files have change logs but no undo.
+`revision` prints `preview`: per changed field, the value now and the
+value a revert would restore (`now` and `after_revert` in JSON). List
+fields (`items`, `links`, `tiles`) are whole lists shaped as the resource
+shows them, and a post's `categories` is a list of ids; the table view
+shortens them to a count and the entries' names, `-o json` has it all.
+
+`revert` undoes that revision **and every later one** and prints the
+resource as it now is. A revert is itself a revision, so a mistaken revert
+is undone by reverting the revert. The creation revision cannot be
+reverted (exit 6, `conflict`); delete the object instead. Revision lists
+are not paginated; `--limit` trims them.
+
+Because slugs, parents, status and publish dates are tracked, reverting a
+page or post can change its URL or publish or unpublish it: preview first.
+A revert answers 409 (exit 6, `conflict`) and changes nothing when the
+earlier state can no longer be restored:
+
+- another page or post now has that URL;
+- the earlier parent has since been moved under the page (it would loop);
+- another sidebar, banner or Featured Pages group has taken the name;
+- for design, the earlier template is no longer offered.
+
+Fix what is in the way (rename or move the other object) and revert again.
+
+List entries a revert brings back (a deleted sidebar item, navigation
+link or tile) are new rows with **new ids**; entries that still exist keep
+theirs. Read the ids again (`sidebars get`, `nav get`, `featured get`)
+before `update-item`, `nav update` or `update-tile`.
+
+### Undo for settings and design
+
+Settings and design are single objects, so their commands take no
+reference:
+
+```bash
+geekcli settings revisions --limit 5           # which settings each save changed, and who
+geekcli settings revision 9001                 # per setting: the value now and after a revert
+geekcli settings revert 9001                   # undo 9001 and every later settings change
+geekcli design revisions
+geekcli design revision 9100                   # template and colour scheme, now and after
+geekcli design revert 9100 && geekcli snapshot / --full
+```
+
+These come from the site's settings history instead of the Versions page.
+They list every change to the settings the API exposes, whoever made it,
+going back over the site's most recent 500 settings saves. `by.name` is
+the person or tool recorded there, and `by.api_key` is set for changes
+made through the API (the table shows `API key <name>` for those).
+`changed_fields` holds setting names for `settings`, and `template` and/or
+`styles` for `design`.
+
+In a settings preview `null` (blank in the table) means the site had no
+value of its own, so a revert returns that setting to its inherited
+default. `settings revert` prints the settings it changed, like `settings
+set`; `design revert` prints the design, like `design set`, and is live at
+once. Both are validated like any other change: a revert that can no
+longer be applied (a value the site no longer accepts, a template that is
+gone, nothing left to undo) is exit 6, `conflict`, with the setting named
+in `fields` where there is one.
+
+### What has no undo
+
+- **Files** have their own undo, for 90 days: `files restore` (§19).
+- **Deleting** anything other than a file is permanent. A deleted page,
+  post, sidebar, footer, banner or Featured Pages group takes its
+  revisions with it; `get -o json` it to a file first if it might be
+  wanted back.
+- **Blog categories** and the **blog landing page** (§6, §7) keep no
+  revisions. Their changes are recorded in the site's change log only, so
+  re-read before overwriting them.
 
 API reference: [Revisions and undo](https://developers.realgeeks.com/content-api/site-pages/#revisions-and-undo).
 
@@ -601,13 +678,16 @@ geekcli nav move top_primary 16 --to 0
 geekcli nav remove top_primary 27
 geekcli nav set top_primary --data @links.json                    # replace all, in order
 geekcli nav clear seller_leads
+geekcli nav revisions top_primary --limit 5                       # and `revision`, `revert` (§9)
 ```
 
 A link is `{"type": "custom"|"contact", "url", "anchor_text", "nofollow"}`.
 `update`, `move` and `remove` take a link by id, or by its anchor text or
 URL as a convenience. Ids are stable: `add --at` and `move` send a
 position, and `set` keeps the rows whose ids you include, so
-`--data '[{"id": 12}, {"id": 10}]'` is a pure reorder.
+`--data '[{"id": 12}, {"id": 10}]'` is a pure reorder. `nav revert`
+undoes any of these, `set` and `clear` included, in one step; links it
+brings back get new ids (§9).
 
 API reference: [Navigation bars](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#navigation-bars).
 
@@ -632,6 +712,7 @@ geekcli sidebars move-item 5 51 --to 0
 geekcli sidebars remove-item 5 50
 geekcli sidebars set-items 5 --data @items.json                         # replace all
 geekcli sidebars delete 5 --force                                       # even if pages use it
+geekcli sidebars revisions "Luxury Sidebar" --limit 5                   # and `revision`, `revert` (§9)
 ```
 
 Item JSON shapes, for `--data`:
@@ -645,6 +726,9 @@ Item JSON shapes, for `--data`:
 Attach a sidebar to a page with `geekcli pages update <ref> --sidebar
 <id or name>` (`--sidebar null` detaches). `set-items` keeps items whose
 ids you include; ids are stable across `move-item` and `add-* --at`.
+`sidebars revert` puts the name and items back as they were before a
+revision; items it brings back get new ids (§9). A deleted sidebar cannot
+be brought back.
 
 API reference: [Sidebars](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#sidebars).
 
@@ -695,6 +779,7 @@ geekcli featured update-tile 3 9 --cta "Explore Riverside"
 geekcli featured set-tiles 3 --data @tiles.json         # entries with an id are kept
 geekcli home-page update --tile-group "Where We Live"
 geekcli home-page update --tile-group null              # detach
+geekcli featured revisions "Where We Live" --limit 5    # and `revision`, `revert` (§9)
 ```
 
 Every page (content, area, agent and home) can also carry its own
@@ -762,6 +847,7 @@ geekcli settings set GA4_MEASUREMENT_ID="G-AAA,G-BBB" # lists take comma-separat
 geekcli settings set --data '{"SOME_OBJECT_SETTING": {"k": 1}}'
 geekcli settings clear GOOGLE_ANALYTICS_KEY           # back to the inherited default
 geekcli settings set HEADER_LOGO="$(geekcli files upload logo.png --to images -q)"
+geekcli settings revisions --limit 5                 # and `revision <id>`, `revert <id>` (§9)
 ```
 
 `HEADER_LOGO` is the header logo. Set it, like every file setting, to a
@@ -774,7 +860,8 @@ rejected locally with exit code 2 before anything is sent. `depends`
 names other settings whose values must allow the change; the API rejects
 a violating change with exit code 5 and names the field. Changes take
 effect on the live site within a few seconds and are recorded in the
-site's settings history.
+site's settings history, which `settings revisions` lists and `settings
+revert <id>` undoes (§9).
 
 API reference: [Site settings](https://developers.realgeeks.com/content-api/design-settings-files/#site-settings).
 
@@ -792,6 +879,7 @@ geekcli design variation anna-modern coastal         # that variation's variable
 geekcli design preview --template anna-modern --snapshot preview.png   # nothing saved
 geekcli design set --template anna-modern --variation coastal
 geekcli design set --var palette-brand-color=#0066A7 --snapshot after.png
+geekcli design revisions --limit 5                   # and `revision <id>`, `revert <id>` (§9)
 ```
 
 Changing the template alone applies that template's default variation,
@@ -805,8 +893,8 @@ change without saving. Unsaved variables are applied only for a browser
 signed in to the site's admin, so open the link there. `--snapshot FILE`
 on `preview` is allowed for a template-only change (the template switch
 renders for everyone) and refused when `--variation` or `--var` is present;
-for those, `design set --snapshot after.png` and revert with another `set`
-if it disappoints. The link is re-homed onto the origin the CLI is talking
+for those, `design set --snapshot after.png` and undo it with `design
+revert <id>` (the id from `design revisions --limit 1`) if it disappoints. The link is re-homed onto the origin the CLI is talking
 to, so it works against a local or staging site as well as the live domain. Content features differ by design (tiles and featured agents
 on anna-modern, a right-hand sidebar on molly), so after a real change
 snapshot the home page, a content page and a post.
@@ -830,6 +918,9 @@ geekcli files upload --from-url https://u.realgeeks.media/<site>/images/logo.png
 geekcli files mkdir images/2026
 geekcli files move images/hero.jpg images/2026/hero.jpg
 geekcli files delete images/2026         # a folder goes with everything in it
+geekcli files deleted images             # what was deleted under a folder and can come back
+geekcli files versions images/logo.png   # a file's versions from the last 90 days
+geekcli files restore images/logo.png    # undo the last delete or overwrite
 ```
 
 Uploads are limited to 8,000,000 bytes and to jpg/jpeg, png, gif, ico,
@@ -859,6 +950,55 @@ does not end in a file name, pass `--name` with the right extension.
 Deleting a folder removes its files from storage first; if storage refuses
 some of them the call fails (exit 1) and those files stay listed, so run the
 same delete again.
+
+### File undo
+
+A delete or an overwrite from the **last 90 days** can be reversed,
+including ones made in the admin's Manage Files page. What counts is when
+the file was deleted or replaced, not when it was uploaded: a logo
+uploaded years ago and deleted yesterday comes back. Older deletes and
+overwrites are not listed and cannot be restored.
+
+```bash
+geekcli files versions images/logo.png                 # current state and replaced versions, newest first
+geekcli files restore images/logo.png                  # the file as it was before the last delete or overwrite
+geekcli files restore images/logo.png --version-id <version_id>   # a particular version
+geekcli files deleted                                  # everything deleted under the root, any depth
+geekcli files deleted images --all                     # every page for one folder
+geekcli files restore images/2026                      # a deleted folder and what was deleted with it
+```
+
+`files versions` prints `{"path", "results": [{"version_id", "at",
+"action": "saved"|"deleted", "size", "current", "restorable"}]}`; `-q`
+prints the version ids. Only `restorable` versions can be passed to
+`--version-id` (alias `--version`); the current version and delete markers
+cannot.
+
+`files deleted [folder]` prints `{"path", "results": [{"path", "type":
+"file"|"folder", "deleted_at"}], "next_cursor"}`. It pages like `files
+list`: one page per call with `next_cursor` to pass to `--cursor`, or
+`--all` to follow every page. `-q` prints the paths.
+
+`files restore <path>` brings a file back **at the same URL**. Without
+`--version-id` it restores the version before the current state, which
+undoes a delete or an overwrite. Given the path of a deleted folder it
+restores the folder and what was deleted with it, but not files removed
+from it earlier; restore those one at a time. It prints `{"restored":
+[file entries], "incomplete"}`, and `-q` prints the restored URLs. When
+`incomplete` is true a very large folder was only partly restored: a
+`warning: incomplete: …` line goes to stderr in every output mode, and
+the fix is to run `files deleted <folder>` and restore the sub-folders it
+still lists.
+
+A restore adds a new version and never removes one, so it can be undone
+the same way. A moved file is undone with `files move` back. As with
+`--overwrite`, the CDN may keep serving the replaced file for a while.
+
+| Exit | Code | Meaning |
+| ---- | ---- | ------- |
+| 6 | `conflict` | the delete or overwrite is more than 90 days old, there is nothing to restore, or that version is already current |
+| 4 | `not_found` | no file has been at that path, or no such version |
+| 1 | `file_history_unavailable` (503) | version history cannot be read for the site; nothing was restored |
 
 `-q` on `upload`, `get` and `url` prints only the public URL, which is
 what to put in `--facebook-image`, in `<img src>` inside content, and in
@@ -1188,8 +1328,11 @@ API reference: [the full Content API](https://developers.realgeeks.com/content-a
 5. On exit code 5, read `error.fields` and fix the named fields. On a
    settings batch, fix or drop the named setting and resend the rest.
 6. Prefer `update` with specific flags over `--replace`.
-7. Before a large rewrite of a page, area page, post or footer, note
-   `<command> revisions <ref> --limit 1`; a bad result is one `revert` away.
+7. Before a large rewrite of a page, area page, post, footer, sidebar or
+   navigation bar, or a settings or design change, note
+   `<command> revisions <ref> --limit 1`; a bad result is one `revert` away
+   (§9). A deleted or overwritten file comes back with `files restore`
+   for 90 days (§19); deleting anything else is permanent.
 8. After changing anything visible, `geekcli snapshot <path> --full`
    and look at the image. Check `--mobile` too when layout changed.
 9. `geekcli guide <topic>` pulls one section of this guide (for
@@ -1269,6 +1412,7 @@ geekcli area-pages update /riverside/ --banner null       # take it off a page
 geekcli banners update "Open house" --message "Open house this Sunday, 1 to 4"
 geekcli banners get "Open house"                          # used_by: the pages showing it
 geekcli banners delete "Open house" --force
+geekcli banners revisions "Open house" --limit 5          # and `revision`, `revert` (§9)
 ```
 
 - A banner shows nowhere until a page uses it, and there is no site-wide
@@ -1279,6 +1423,8 @@ geekcli banners delete "Open house" --force
   both short, the strip is one line on a phone.
 - `--url` is a site path or an http(s), mailto or tel URL.
 - Deleting a banner pages still show is a 409; `--force` takes it off them.
+- An edit is undone with `banners revert` (§9); a deleted banner cannot be
+  brought back.
 - Snapshot a page after attaching one (`geekcli snapshot /buying/`).
 
 API reference: [Banners](https://developers.realgeeks.com/content-api/navigation-sidebars-footers/#banners).

@@ -91,6 +91,30 @@ pub enum FeaturedSub {
         #[arg(long, value_name = "JSON")]
         data: String,
     },
+    /// List a group's revisions, newest first
+    Revisions {
+        /// Group id or title
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision {
+        /// Group id or title
+        reference: String,
+        rev: u64,
+    },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Revisions track the title, the blurb and the whole tile list. One request is one revision, so `set-tiles` is undone in one step.
+  - Tiles a revert brings back are new rows with new ids; tiles that still exist keep theirs. Read the ids again before `update-tile`.
+  - 409 (exit 6) when another group now has the earlier title. A deleted group cannot be brought back.")]
+    Revert {
+        /// Group id or title
+        reference: String,
+        rev: u64,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -257,6 +281,21 @@ pub fn run(ctx: &Context, cmd: FeaturedCommand) -> Result<()> {
                 .put(&tiles_path(id), &json!({ "tiles": tiles }))?
                 .body;
             print_group(ctx, &updated)
+        }
+        FeaturedSub::Revisions { reference, limit } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::list(ctx, &detail_path(id), limit)
+        }
+        FeaturedSub::Revision { reference, rev } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::show(ctx, &detail_path(id), rev)
+        }
+        FeaturedSub::Revert { reference, rev } => {
+            let group = resolve(ctx, &reference)?;
+            let id = id_of(&group)?;
+            let label = format!("featured group {id} \"{}\"", cell(&group["title"]));
+            let restored = super::revisions::revert_request(ctx, &detail_path(id), rev, &label)?;
+            print_group(ctx, &restored)
         }
     }
 }

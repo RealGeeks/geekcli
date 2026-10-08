@@ -53,6 +53,21 @@ pub enum BannersSub {
         #[arg(long)]
         force: bool,
     },
+    /// List a banner's revisions, newest first
+    Revisions {
+        /// Banner id or name
+        reference: String,
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { reference: String, rev: u64 },
+    /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Every field is tracked, and every page showing the banner changes with the revert.
+  - 409 (exit 6) when another banner now has the earlier name. A deleted banner cannot be brought back.")]
+    Revert { reference: String, rev: u64 },
 }
 
 #[derive(Debug, Args)]
@@ -146,6 +161,20 @@ pub fn run(ctx: &Context, cmd: BannersCommand) -> Result<()> {
                 ctx.printer.raw(&json!({ "deleted": true, "id": id }))?;
             }
             Ok(())
+        }
+        BannersSub::Revisions { reference, limit } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::list(ctx, &detail_path(id), limit)
+        }
+        BannersSub::Revision { reference, rev } => {
+            let id = id_of(&resolve(ctx, &reference)?)?;
+            super::revisions::show(ctx, &detail_path(id), rev)
+        }
+        BannersSub::Revert { reference, rev } => {
+            let banner = resolve(ctx, &reference)?;
+            let id = id_of(&banner)?;
+            let label = format!("banner {id} \"{}\"", cell(&banner["name"]));
+            super::revisions::revert(ctx, &detail_path(id), rev, &label)
         }
     }
 }

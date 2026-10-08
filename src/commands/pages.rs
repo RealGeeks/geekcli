@@ -95,6 +95,9 @@ pub enum PagesSub {
     /// Show one revision with what a revert would restore
     Revision { reference: String, rev: u64 },
     /// Undo a revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Revisions track every writable field, including slug, parent, title, meta fields, banner and the landscape image, so a revert can move the page to its earlier URL. Check `pages revision <ref> <rev>` first.
+  - 409 (exit 6), changing nothing, when another page now has that URL or the earlier parent has since moved under this page.")]
     Revert { reference: String, rev: u64 },
 }
 

@@ -49,6 +49,22 @@ pub enum DesignSub {
   - Open the link in a browser signed in to the site's admin: unsaved --variation/--var values are applied only for a logged-in admin.
   - --snapshot is allowed for a --template-only preview (the template switch renders for everyone) and refused when --variation or --var is present; use `design set --snapshot` for those.")]
     Preview(ChangeArgs),
+    /// List changes to the template and colour scheme, newest first
+    #[command(after_help = "Notes:
+  - Taken from the site's settings history: every design change, whoever made it (the admin, support, this CLI), over the site's most recent 500 settings saves.
+  - `changed` is `template`, `styles` (the colour scheme and its variables) or both.")]
+    Revisions {
+        /// Show only the latest N
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+    },
+    /// Show one revision with what a revert would restore
+    Revision { rev: u64 },
+    /// Undo a design revision and everything after it (the revert is itself undoable)
+    #[command(after_help = "Notes:
+  - Puts back the template and colour scheme from before that revision; the change is live at once, so snapshot afterwards.
+  - 409 (exit 6) when the earlier template is no longer offered, or when there is nothing left to undo.")]
+    Revert { rev: u64 },
 }
 
 #[derive(Debug, Args, Clone)]
@@ -187,6 +203,17 @@ pub fn run(ctx: &Context, cmd: DesignCommand) -> Result<()> {
                 return Ok(());
             }
             ctx.printer.raw(&result)
+        }
+        DesignSub::Revisions { limit } => super::revisions::list(ctx, PATH, limit),
+        DesignSub::Revision { rev } => super::revisions::show(ctx, PATH, rev),
+        DesignSub::Revert { rev } => {
+            let result = super::revisions::revert_request(ctx, PATH, rev, "the design")?;
+            ctx.printer.note(&format!(
+                "Design is now {} / {}",
+                cell(&result["template"]),
+                cell(result.pointer("/styles/name").unwrap_or(&Value::Null))
+            ));
+            print_design(ctx, &result)
         }
     }
 }
