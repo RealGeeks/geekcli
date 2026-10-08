@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/RealGeeks/geekcli/compare/v0.11.1...v0.12.0) (2026-10-08)
+
+
+### Features
+
+* undo for sidebars, navigation, featured pages, banners, settings, design and files ([#69](https://github.com/RealGeeks/geekcli/issues/69)) ([2231854](https://github.com/RealGeeks/geekcli/commit/2231854a265a49a3761348db24d917d6616bc60b))
+
 ## [0.11.1](https://github.com/RealGeeks/geekcli/compare/v0.11.0...v0.11.1) (2026-10-07)
 
 
