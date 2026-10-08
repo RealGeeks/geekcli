@@ -15,8 +15,8 @@ stdout when piped, JSON errors on stderr, stable exit codes, and a built-in
 guide written for agents.
 
 It is a client for the Real Geeks Content API, documented at
-<https://developers.realgeeks.com/content-api/>. The API is switched on per
-site; site owners can [request access](https://developers.realgeeks.com/request-api-access/).
+<https://developers.realgeeks.com/content-api/>. The API is in beta and is on
+for every Real Geeks website; there is nothing to request.
 
 **Status:** pre-1.0 and under active development alongside the Content API
 beta. Breaking changes are called out in the [changelog](CHANGELOG.md).
@@ -70,10 +70,8 @@ Already a customer? Read on.
 
 ## What you need
 
-- **The Content API switched on for the website.** It is in beta and enabled
-  per site: [request access](https://developers.realgeeks.com/request-api-access/)
-  or ask Real Geeks support. Until then every command fails with
-  `api_disabled`.
+- **A Real Geeks website.** The Content API is in beta and is on for every
+  site; you no longer need to request access.
 - **The site owner's approval.** Only the owner (or a Real Geeks superuser)
   can approve geekcli for a site, in the site's own admin. Anyone else can use
   a key the owner creates for them under **Admin → API keys**.
@@ -331,8 +329,7 @@ Highlights:
   `--fail-on-warnings` makes them exit 5 (after the write).
 - **Stable exit codes**: 1 other failure, including a temporary outage behind
   the site (`crm_unavailable`, `design_catalogue_unavailable`,
-  `files_unavailable`) worth retrying; 2 usage, 3 auth, which also covers a
-  site whose API is switched off (`api_disabled`); 4 not found, 5 validation,
+  `files_unavailable`) worth retrying; 2 usage, 3 auth; 4 not found, 5 validation,
   6 conflict, 7 rate limited, 8 network, 9 this geekcli is too old for the
   API (run `geekcli update`). Errors are JSON on stderr in JSON
   mode and include the API's per-field messages.
@@ -390,9 +387,6 @@ Highlights:
 
 ## Troubleshooting
 
-- **`api_disabled`** (exit 3): the Content API is off for that site.
-  [Request access](https://developers.realgeeks.com/request-api-access/) or
-  contact Real Geeks support.
 - **`token_expired`** (exit 3): keys last six months. Run
   `geekcli auth login --site www.example.com` again.
 - **`command not found: geekcli`**: open a new terminal. If it is still

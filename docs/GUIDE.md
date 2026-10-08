@@ -9,9 +9,8 @@ automated caller can rely on.
 The API itself is documented at <https://developers.realgeeks.com/content-api/>,
 with a [changelog](https://developers.realgeeks.com/content-api/changelog/) of
 what it has gained. Each section below links to the matching part of that
-reference. The API is switched off until Real Geeks enables it for a site
-(`api_disabled`, exit 3); site owners can
-[request access](https://developers.realgeeks.com/request-api-access/).
+reference. The API is in beta and is on for every Real Geeks website; there
+is nothing to request.
 
 ## 1. Setup
 
@@ -130,7 +129,7 @@ API reference: [Enabling](https://developers.realgeeks.com/content-api/#enabling
 | 0    | success                                                 |
 | 1    | other failure, including a temporary outage behind the site (`crm_unavailable`, `design_catalogue_unavailable`, `files_unavailable`): retry later. Also `file_history_unavailable` (503): file versions cannot be read for the site, so nothing was restored (§19) |
 | 2    | usage error (bad flags, missing required field)         |
-| 3    | not logged in, invalid key, key lacks the scope, or the site's API is off (`api_disabled`: Real Geeks enables it per site) |
+| 3    | not logged in, invalid key, or key lacks the scope |
 | 4    | not found                                               |
 | 5    | validation error (see `fields`), bad request, or a body too large (413); with `--fail-on-warnings`, the API returned warnings (code `warnings`; the request succeeded and any write was applied) |
 | 6    | conflict: a guarded delete (the message names the flag), two writes raced on the same slug or name (retry), or a `revert` / `files restore` that can no longer be applied (§9, §19) |
