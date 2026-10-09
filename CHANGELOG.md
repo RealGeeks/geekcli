@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/RealGeeks/geekcli/compare/v0.12.0...v0.12.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* point agents at the font settings instead of a Google Fonts [@import](https://github.com/import) ([#72](https://github.com/RealGeeks/geekcli/issues/72)) ([4784fb9](https://github.com/RealGeeks/geekcli/commit/4784fb9687d87164083a8eb0533ceeaa9bb6d13f))
+* say why scripts are refused and how a person adds one in the admin ([#75](https://github.com/RealGeeks/geekcli/issues/75)) ([d670c6d](https://github.com/RealGeeks/geekcli/commit/d670c6d263243e3ef9d0becd3214d43953a3920d))
+
 ## [0.12.0](https://github.com/RealGeeks/geekcli/compare/v0.11.1...v0.12.0) (2026-10-08)
 
 
