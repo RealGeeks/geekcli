@@ -52,6 +52,7 @@ pub enum PostsSub {
     #[command(after_help = "Notes:
   - The body is sanitized: script (except JSON-LD), button, form, video, event handlers and data-* attributes are dropped, iframes only for YouTube/Vimeo. <style> blocks, inline style, inline svg and microdata attributes are kept; CSS is page-wide, so prefix your class names.
   - See `geekcli guide html`.
+  - Scripts are never saved through the API (so nothing an agent reads can talk it into adding code). A person adds one in the admin: open the link in the `warning:` line, click the code button (<>) and paste it.
   - Content columns are Windows-1252: arrows, CJK text and emoji are rejected with a 422 naming them; write such a character as a numeric entity (&#8594;) or use &raquo;.
   - Contact links: <a class=\"popup\" href=\"/member/contact/\"> opens the contact form as an overlay on designs that support it and works as a plain link elsewhere.
   - Put <!--read more--> where the summary ends.

@@ -1117,6 +1117,37 @@ microdata attributes. **It drops** `script` (except JSON-LD, below),
 `number-of-tiles="three"` hook vanishes silently). Entities get
 normalised; that is not a change.
 
+**Scripts are refused on purpose.** An agent reads web pages, listings
+and other people's content while it works, and any of that text could
+carry instructions meant for it (prompt injection). If the API saved
+JavaScript, such text could get code running for every visitor to the
+site. So `<script>` is never saved, and no encoding or attribute gets
+around it: do not try, and do not resend. When the site owner really
+needs a script (a chat widget, a tracking snippet, an embed that needs
+JavaScript), a signed-in person adds it in the site's admin:
+
+1. Open the item's admin form. The `warning:` line for a removed script
+   gives the exact link (`admin_url` in the JSON); otherwise build it
+   from the id:
+
+   | Content | Admin form |
+   | ------- | ---------- |
+   | page | `https://<site>/admin/content/contentpage/<id>/change/` |
+   | area page | `https://<site>/admin/content/areapage/<id>/change/` |
+   | agent page | `https://<site>/admin/content/agentlandingpage/<id>/change/` |
+   | market report page | `https://<site>/admin/content/marketreportpage/<id>/change/` |
+   | home page | `https://<site>/admin/content/homepage/` |
+   | post | `https://<site>/admin/blog/post/<id>/change/` |
+   | footer | `https://<site>/admin/content/footer/<id>/change/` |
+   | sidebar | `https://<site>/admin/content/sidebar/<id>/change/` |
+
+2. Click the code button (`<>`) in the editor's toolbar and paste the
+   snippet into the HTML.
+
+Hand the user that link and the snippet, and say that this step is
+theirs. Afterwards leave that field alone: an update that sends it again
+strips the script (see the read-back rule below).
+
 **CSS.** A `<style>` block is kept as written: classes, `@media`, custom
 properties, flex and grid, `@font-face`. Inline `style` is kept too.
 

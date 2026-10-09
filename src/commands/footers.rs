@@ -50,7 +50,8 @@ pub enum FootersSub {
     /// Replace a footer's content
     #[command(after_help = "Notes:
   - Footer 1 is what every page shows unless a page has its own (--footer on pages update).
-  - Scripts are stripped; use the logo's u.realgeeks.media URL from `files upload -q`.
+  - Use the logo's u.realgeeks.media URL from `files upload -q`.
+  - Scripts are never saved through the API (so nothing an agent reads can talk it into adding code). A person adds one in the admin: open the link in the `warning:` line, click the code button (<>) and paste it (`geekcli guide html`).
   - Same HTML rules as posts.
   - Don't load web fonts from a footer (@import, <link>, @font-face): set HEADING_FONT and BODY_FONT with `settings set` (`geekcli guide fonts`).")]
     Update(UpdateArgs),

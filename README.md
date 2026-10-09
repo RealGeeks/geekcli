@@ -342,6 +342,9 @@ Highlights:
   attributes and inline `<svg>` in content, so a designed page can be edited
   without losing them. Other scripts, event handlers and forms are still
   removed and reported as warnings; `geekcli guide html` has the rules.
+  JavaScript is refused on purpose, so that nothing an agent reads can talk
+  it into adding code to a site; a person adds a script in the site's admin
+  (the warning links to the form: click the editor's code button and paste).
 - **Drafts by default**: `posts create` sends `status: draft` unless you pass
   `--status published`. The API itself defaults to published, which is the
   wrong default for automation.
