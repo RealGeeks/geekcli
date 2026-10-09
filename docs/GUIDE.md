@@ -846,6 +846,7 @@ geekcli settings set GA4_MEASUREMENT_ID="G-AAA,G-BBB" # lists take comma-separat
 geekcli settings set --data '{"SOME_OBJECT_SETTING": {"k": 1}}'
 geekcli settings clear GOOGLE_ANALYTICS_KEY           # back to the inherited default
 geekcli settings set HEADER_LOGO="$(geekcli files upload logo.png --to images -q)"
+geekcli settings set HEADING_FONT="Playfair Display" BODY_FONT=Raleway   # fonts (§18)
 geekcli settings revisions --limit 5                 # and `revision <id>`, `revert <id>` (§9)
 ```
 
@@ -864,7 +865,7 @@ revert <id>` undoes (§9).
 
 API reference: [Site settings](https://developers.realgeeks.com/content-api/design-settings-files/#site-settings).
 
-## 18. Design: template and colours
+## 18. Design: template, colours and fonts
 
 A site's look is a **template** (design family: `miranda`, `miranda-thin`,
 `molly`, `anna`, `anna-modern`) and a **colour scheme**: a named variation
@@ -898,7 +899,36 @@ to, so it works against a local or staging site as well as the live domain. Cont
 on anna-modern, a right-hand sidebar on molly), so after a real change
 snapshot the home page, a content page and a post.
 
-API reference: [Design](https://developers.realgeeks.com/content-api/design-settings-files/#design).
+### Fonts
+
+On anna and anna-modern the fonts are two settings: `HEADING_FONT`
+(headings and the home page headline) and `BODY_FONT` (body text,
+navigation and buttons).
+
+```bash
+geekcli settings get HEADING_FONT                    # `choices` lists the families
+geekcli settings set HEADING_FONT="Cormorant Garamond" BODY_FONT=Raleway
+geekcli settings clear HEADING_FONT BODY_FONT        # back to the theme's font (Lato)
+```
+
+A blank `HEADING_FONT` means headings use the body font. The families
+are served from the site itself and load with the page, with a fallback
+sized to match so the text does not jump when the font arrives. On other
+templates the settings are rejected (exit 5, naming `TEMPLATE`).
+
+**Use these for every font change.** Never bring a font in with
+`@import url(fonts.googleapis.com...)`, a `<link>` or an `@font-face` in
+a footer, sidebar or page: that either holds up the first paint or makes
+the text jump when the font loads, and it costs the site its PageSpeed
+score. On a test site, moving two families from a footer `@import` to
+these settings took mobile PageSpeed from the high 80s to the mid 90s. If
+the font asked for is not in the list, pick the closest one that is and
+say so. If you find such an `@import` already on a site, set the two
+settings and delete the `@import` line; `font-family` rules that name the
+same family keep working.
+
+API reference: [Design](https://developers.realgeeks.com/content-api/design-settings-files/#design),
+[Fonts](https://developers.realgeeks.com/content-api/design-settings-files/#fonts).
 
 ## 19. Files
 
@@ -1093,6 +1123,8 @@ properties, flex and grid, `@font-face`. Inline `style` is kept too.
 - The CSS applies to the whole page, not just your content. Give every
   class a prefix of your own (`.oak-card`, not `.card`) and never style
   bare tags, `body` or the theme's own classes.
+- Don't load web fonts here (`@import`, `<link>`, `@font-face`): set the
+  site's fonts with the `HEADING_FONT` and `BODY_FONT` settings (§18).
 - Put the `<style>` block first in the field, one block per page.
 - A block or a `style` attribute is dropped whole, with a warning that
   says why, if it contains `javascript:`, `expression(`, `behavior:`,
@@ -1227,7 +1259,8 @@ CLI call; snapshot when done.
    and `?` characters.
 
 The template and colour scheme are `design set`; preview first with
-`design preview --snapshot`. Not reachable through the API: the MLS/board
+`design preview --snapshot`. Fonts are the `HEADING_FONT` and `BODY_FONT`
+settings (§18), never an `@import` in the footer. Not reachable through the API: the MLS/board
 and widget domains. Report those rather than working around them.
 
 ## 23. Design guidance from Real Geeks support

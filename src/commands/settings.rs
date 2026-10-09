@@ -39,6 +39,7 @@ pub enum SettingsSub {
   - Some settings exist only on certain designs (TAGLINE, HEADER_IMAGE_ALT, MOBILE_HEADER_LOGO): the error names the TEMPLATE values that allow them.
   - HEADER_LOGO is the header logo: set it to a URL from `files upload -q`; an external URL may not render. The same goes for other file settings.
   - File settings take a URL, normally one from `files upload -q`; a stored value with a server path in front of https:// is corrupt and the bare URL fixes it.
+  - Fonts are HEADING_FONT and BODY_FONT (anna and anna-modern; `settings get HEADING_FONT` lists the families). Use them instead of a Google Fonts @import or <link> in content, which slows the page.
   - TEMPLATE is not a setting: change the design with `geekcli design set --template ...`.")]
     Set(SetArgs),
     /// Reset settings to their inherited defaults

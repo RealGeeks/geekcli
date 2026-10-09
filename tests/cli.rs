@@ -793,6 +793,18 @@ fn guide_topics_and_sections() {
         "guide html printed more than one section"
     );
 
+    let out = env
+        .cmd()
+        .args(["guide", "fonts"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let fonts = String::from_utf8_lossy(&out);
+    assert!(fonts.contains("HEADING_FONT"), "{fonts}");
+    assert!(fonts.contains("BODY_FONT"), "{fonts}");
+
     env.cmd()
         .args(["guide", "zzz"])
         .assert()

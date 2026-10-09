@@ -44,13 +44,15 @@ pub enum FootersSub {
       <p><a href=\"https://facebook.com/example\"><em class=\"fa-brands fa-facebook\"></em></a>
       <a href=\"https://instagram.com/example\"><em class=\"fa-brands fa-instagram\"></em></a>
       <a href=\"https://linkedin.com/in/example\"><em class=\"fa-brands fa-linkedin\"></em></a></p>
-  - Font Awesome icons render on the themes seen so far; snapshot to check.")]
+  - Font Awesome icons render on the themes seen so far; snapshot to check.
+  - Don't load web fonts from a footer (@import, <link>, @font-face): set HEADING_FONT and BODY_FONT with `settings set` (`geekcli guide fonts`).")]
     Create(ContentArgs),
     /// Replace a footer's content
     #[command(after_help = "Notes:
   - Footer 1 is what every page shows unless a page has its own (--footer on pages update).
   - Scripts are stripped; use the logo's u.realgeeks.media URL from `files upload -q`.
-  - Same HTML rules as posts.")]
+  - Same HTML rules as posts.
+  - Don't load web fonts from a footer (@import, <link>, @font-face): set HEADING_FONT and BODY_FONT with `settings set` (`geekcli guide fonts`).")]
     Update(UpdateArgs),
     /// Delete a footer (the default footer cannot be deleted)
     Delete {
