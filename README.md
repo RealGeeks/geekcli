@@ -377,6 +377,9 @@ Highlights:
   definition before they are sent.
 - **Design**: `design templates`, `design preview --snapshot` and `design set`
   change the template and colour scheme, with an unsaved preview first.
+  Fonts are two settings, `HEADING_FONT` and `BODY_FONT`
+  (`settings set HEADING_FONT="Playfair Display"`), served from the site
+  itself so they do not slow the page the way a Google Fonts `@import` does.
 - **Blog landing page**: `blog get|update` for the blog's own title, meta and heading.
 - **Files**: upload images and PDFs to the site's media bucket, or have the
   site fetch one from a URL (`--from-url`), and get back the public URL to
