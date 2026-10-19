@@ -11,5 +11,6 @@ pub mod config;
 pub mod error;
 pub mod html;
 pub mod output;
+pub mod sources;
 
 pub const GUIDE: &str = include_str!("../docs/GUIDE.md");

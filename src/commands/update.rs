@@ -1,8 +1,10 @@
 //! `geekcli update` — replace this binary with a release from GitHub.
 //!
 //! It installs the same archives `install.sh` and `install.ps1` do, checked
-//! against the same `.sha256` files. The requests go to GitHub through their
-//! own client, so the site's API key is never part of them.
+//! against the same `.sha256` files and, before anything is extracted,
+//! against the archive's build-provenance attestation (`provenance`). The
+//! requests go to GitHub through their own clients, so the site's API key is
+//! never part of them.
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -15,6 +17,7 @@ use self_update::errors::Error as UpdateError;
 use self_update::Release;
 use serde_json::json;
 
+use super::provenance;
 use crate::config;
 use crate::error::{Error, Result};
 use crate::output::{Format, Printer};
@@ -35,13 +38,17 @@ const CHECK_FILE: &str = "update-check";
   GEEKCLI_NO_UPDATE_CHECK=1 turns it off everywhere.
   `--check` prints {\"current_version\", \"release_version\", \"update_available\"}
   and exits 0 either way; branch on `update_available`.
-  The archive is verified against the sha256 published beside it, and the
-  running binary is only replaced after that passes.
+  The archive is verified against the sha256 published beside it and its
+  build-provenance attestation must show it was built by RealGeeks/geekcli's
+  release workflow (the check `gh attestation verify` makes); the running
+  binary is only replaced after both pass. GEEKCLI_SKIP_PROVENANCE=1
+  skips the attestation (for mirrors without GitHub access) and says so.
   A binary in a directory you cannot write (a root-owned /usr/local/bin)
   fails before downloading; re-run with sudo, or reinstall elsewhere with
   GEEKCLI_INSTALL_DIR.
   GitHub limits anonymous lookups per address; GH_TOKEN or GITHUB_TOKEN
-  raises the limit. GEEKCLI_REPO names a fork, as it does for install.sh.")]
+  raises the limit. GEEKCLI_REPO names a fork, as it does for install.sh, with
+  a warning; its builds still have to be attested by RealGeeks/geekcli.")]
 pub struct UpdateArgs {
     /// Report whether a newer release exists without installing it
     #[arg(long)]
@@ -59,6 +66,8 @@ struct Source {
     api_url: Option<String>,
     token: Option<String>,
 }
+
+const GITHUB_API: &str = "https://api.github.com";
 
 impl Source {
     fn from_env() -> Result<Self> {
@@ -83,6 +92,21 @@ impl Source {
             api_url,
             token: env("GH_TOKEN").or_else(|| env("GITHUB_TOKEN")),
         })
+    }
+
+    /// Where releases come from when it is not the official repository on
+    /// github.com, for the warning `run` prints.
+    fn redirected(&self) -> Option<String> {
+        let repo = format!("{}/{}", self.owner, self.name);
+        let other_repo = !repo.eq_ignore_ascii_case(REPO);
+        match (&self.api_url, other_repo) {
+            (None, false) => None,
+            (None, true) => Some(format!("GEEKCLI_REPO={repo}")),
+            (Some(url), false) => Some(format!("GEEKCLI_UPDATE_API_URL={url}")),
+            (Some(url), true) => Some(format!(
+                "GEEKCLI_REPO={repo} and GEEKCLI_UPDATE_API_URL={url}"
+            )),
+        }
     }
 
     fn builder(&self, target: &str) -> github::UpdateBuilder {
@@ -139,6 +163,13 @@ pub fn archive_name(tag: &str, target: &str) -> String {
 pub fn run(printer: Printer, args: &UpdateArgs) -> Result<()> {
     let target = release_target()?;
     let source = Source::from_env()?;
+    // In every output mode, like API warnings: a redirected update source is
+    // worth knowing about even when an agent is the one reading.
+    if let Some(redirect) = source.redirected() {
+        eprintln!(
+            "warning: looking for releases somewhere other than {REPO} on github.com ({redirect}); only builds attested by {REPO}'s release workflow are installed"
+        );
+    }
     let updater = source.builder(&target).build().map_err(failure)?;
 
     let release = match &args.tag {
@@ -271,13 +302,32 @@ fn install(printer: Printer, source: &Source, release: &Release, target: &str) -
     check_writable()?;
     printer.note(&format!("Downloading geekcli {tag} for {target}..."));
     let wanted = archive.clone();
-    source
-        .builder(target)
+    let mut builder = source.builder(target);
+    builder
         .release_tag(&tag)
         // by exact name: the `.sha256` beside each archive also contains the target
         .asset_matcher(move |assets| assets.iter().find(|a| a.name() == wanted).cloned())
         .checksum_from_asset(format!("{archive}.sha256"))
-        .bin_path_in_archive(format!("{folder}/geekcli{}", std::env::consts::EXE_SUFFIX))
+        .bin_path_in_archive(format!("{folder}/geekcli{}", std::env::consts::EXE_SUFFIX));
+    if env(provenance::SKIP_ENV).is_some() {
+        eprintln!(
+            "warning: {} is set: not checking the archive's build provenance, only its sha256",
+            provenance::SKIP_ENV
+        );
+    } else {
+        // After the sha256 and GitHub's digest pass, before anything is extracted.
+        let api = source
+            .api_url
+            .clone()
+            .unwrap_or_else(|| GITHUB_API.to_string());
+        let token = source.token.clone();
+        builder.verify_archive(move |path| {
+            let digest = provenance::sha256_file(path).map_err(UpdateError::from)?;
+            provenance::check(&api, token.as_deref(), &digest)
+                .map_err(UpdateError::archive_verification_rejected)
+        });
+    }
+    builder
         .build()
         .map_err(failure)?
         .update_extended()
@@ -348,6 +398,11 @@ fn failure(err: UpdateError) -> Error {
             retry_after: retry_after.map(|d| d.as_secs()),
         },
         UpdateError::NotFound { .. } => not_found("the release was not found on GitHub".into()),
+        UpdateError::ArchiveVerificationRejected { reason, .. } => Error::Other(format!(
+            "refusing to install: the archive's build provenance did not check out ({}). Nothing was changed. If you are installing from a mirror that cannot reach GitHub, set {}=1 to rely on the sha256 alone",
+            reason.unwrap_or_else(|| "no reason given".into()),
+            provenance::SKIP_ENV
+        )),
         UpdateError::InstallPathNotWritable { path, .. } => Error::Io(format!(
             "cannot write {}; {NOT_WRITABLE}",
             path.display()

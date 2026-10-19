@@ -30,9 +30,24 @@ way and will be passed to the right team.
 ## Verifying a download
 
 Every release archive has a `.sha256` checksum beside it and a signed
-build-provenance attestation. To check that an archive was built from this
-repository by its release workflow:
+build-provenance attestation. `geekcli update` verifies the attestation
+itself (Sigstore's trust root is built in) and refuses an archive that was
+not built by this repository's release workflow on `main`; the install
+scripts do the same through the GitHub CLI when it is installed and logged
+in, and otherwise print the command. To check an archive by hand:
 
 ```bash
-gh attestation verify geekcli-<version>-<target>.tar.gz --repo RealGeeks/geekcli
+gh attestation verify geekcli-<version>-<target>.tar.gz --repo RealGeeks/geekcli \
+  --cert-identity https://github.com/RealGeeks/geekcli/.github/workflows/release.yml@refs/heads/main
 ```
+
+`GEEKCLI_SKIP_PROVENANCE=1` skips the attestation in both, for mirrors that
+cannot reach GitHub; the sha256 is still checked.
+
+## Stored keys
+
+API keys are kept in `~/.config/geekcli/config.toml`, readable only by you
+(mode 600 in a 700 directory, restored with a warning if found looser). They
+are not in the operating system's keychain; that is a possible future
+option. Anyone who can run code as your user can read the file, so revoke a
+key under **Admin → API keys** if the machine may be compromised.

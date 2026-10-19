@@ -32,11 +32,12 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
+      # Settings come from release-please-config.json (no release-type input,
+      # which would ignore that file): it also bumps the tagged install-script
+      # URLs in the docs (extra-files, x-release-please-version markers).
       - name: Release Please
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        with:
-          release-type: rust
 
   build:
     name: Build ${{ matrix.settings.target }}
@@ -85,7 +86,8 @@ jobs:
       - name: Install cargo-about
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
-          tool: cargo-about
+          # pinned: it runs over every dependency to write the shipped license file
+          tool: cargo-about@0.9.2
 
       - name: Build binary
         shell: bash
@@ -185,7 +187,10 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           export GEEKCLI_INSTALL_DIR="$RUNNER_TEMP/bin"
-          sh install.sh --version "$TAG"
+          # gh is installed and GH_TOKEN set here, so provenance must be checked
+          sh install.sh --version "$TAG" 2> "$RUNNER_TEMP/install.log" || { cat "$RUNNER_TEMP/install.log"; exit 1; }
+          cat "$RUNNER_TEMP/install.log"
+          grep -F "Build provenance verified" "$RUNNER_TEMP/install.log"
           "$GEEKCLI_INSTALL_DIR/geekcli" --version | grep -F "${TAG#v}"
 
       - name: install.sh piped (the documented curl | sh path)
@@ -221,7 +226,10 @@ jobs:
         shell: pwsh
         run: |
           $env:GEEKCLI_INSTALL_DIR = "$env:RUNNER_TEMP\bin"
-          ./install.ps1 -Version $env:TAG
+          # gh is installed and GH_TOKEN set here, so provenance must be checked
+          $log = ./install.ps1 -Version $env:TAG 6>&1 | Out-String
+          Write-Host $log
+          if ($log -notmatch 'Build provenance verified') { throw 'install.ps1 did not verify build provenance' }
           $out = & "$env:GEEKCLI_INSTALL_DIR\geekcli.exe" --version
           if ($out -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "unexpected version: $out" }
 

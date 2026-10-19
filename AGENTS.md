@@ -12,10 +12,12 @@ design and uploaded files.
 
 Install:
 
+<!-- x-release-please-start-version -->
 ```bash
-curl -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/main/install.sh | sh
-# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.sh | sh
+# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.ps1 | iex
 ```
+<!-- x-release-please-end -->
 
 Log in. Browser login needs the site owner to click Approve, so ask your
 human to run it, or to give you a key:
@@ -81,6 +83,7 @@ src/
 ├── error.rs           # Error enum → exit codes
 ├── output.rs          # json / jsonl / table printing, error printing
 ├── html.rs            # body input from flag/file/stdin, Markdown → HTML
+├── sources.rs         # which local files may be read and sent (no dotfiles, ~/.ssh, config.toml)
 ├── auth/browser.rs    # browser-approval login: cli/start → loopback callback → cli/token
 └── commands/
     ├── mod.rs         # Context, Payload builder, id/slug/path resolution, paging
@@ -108,6 +111,7 @@ src/
     ├── search.rs      # property search (/api/v2/search/): fields, check, run, url, saved-search lookup
     ├── guide.rs       # `guide [topic]` over docs/GUIDE.md
     ├── update.rs      # self-update from the GitHub release archives (self_update crate, its own client)
+    ├── provenance.rs  # update's Sigstore check of the archive's build-provenance attestation (ring backend)
     └── api.rs         # raw METHOD PATH escape hatch
 tests/                 # end-to-end tests against a mockito server; snapshot/inspect use a real Chrome when installed
 docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <topic>` prints one `## N. Title` section
@@ -138,9 +142,18 @@ docs/GUIDE.md          # agent-facing guide, embedded via include_str!; `guide <
 - The API key never leaves the site's origin: no cross-origin redirects,
   no full URLs off the site, https only (plain http just for local dev
   hosts). Keep it that way in any new request path.
+- Every local file a command reads and sends goes through
+  `sources::check` (or `sources::why_refused` for uploads): hidden files,
+  credential folders and the config file are refused unless
+  `--allow-any-source`. Text from the server that reaches a terminal goes
+  through `output::sanitize`, keys and `-q` lines included.
 - `geekcli update` is the one request path that leaves the site: it talks to
   GitHub through `self_update`'s own client and must never be handed the
-  site key. Nothing updates in the background; scripts and agents need the
+  site key. Before extracting, it verifies the archive's build-provenance
+  attestation against the embedded Sigstore root, pinned to
+  `release.yml@refs/heads/main` of RealGeeks/geekcli whatever
+  `GEEKCLI_REPO` says (`commands/provenance.rs`); keep the sigstore crates
+  current so the root does not go stale. Nothing updates in the background; scripts and agents need the
   version to stay put between calls. `update::notify` mentions a newer
   release once a day, on a terminal only. Retiring a version is the API's
   job: it sees `User-Agent: geekcli/<version>` and answers `client_too_old`

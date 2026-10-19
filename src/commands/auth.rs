@@ -213,7 +213,7 @@ fn login(env: &mut AuthEnv<'_>, args: &LoginArgs) -> Result<()> {
     let me = authed.get("me/", &Query::new())?.body;
     let key_info = me.get("api_key").cloned().unwrap_or(Value::Null);
     // The live domain is kept as an alias so `--site` accepts either name.
-    let aliases = config::aliases_from_me(&me, &domain);
+    let aliases = aliases_from_me(&me, &domain, env.verbose);
 
     let stored_base = env.overrides.base_url.clone();
     env.config.put_site(
@@ -366,7 +366,7 @@ fn refresh_aliases(env: &mut AuthEnv<'_>) -> Result<()> {
             .and_then(|client| client.get("me/", &Query::new()));
         match me {
             Ok(me) => {
-                let aliases = config::aliases_from_me(&me.body, &key);
+                let aliases = aliases_from_me(&me.body, &key, env.verbose);
                 if let Some(site) = env.config.sites.get_mut(&key) {
                     changed |= site.aliases != aliases;
                     site.aliases = aliases;
@@ -379,6 +379,21 @@ fn refresh_aliases(env: &mut AuthEnv<'_>) -> Result<()> {
         env.config.save()?;
     }
     Ok(())
+}
+
+/// The aliases to store for `key`, logging (with -v) the ones its server
+/// reported but may not claim; see `config::alias_allowed`.
+fn aliases_from_me(me: &Value, key: &str, verbose: bool) -> Vec<String> {
+    let (aliases, dropped) = config::split_aliases_from_me(me, key);
+    if verbose {
+        for alias in dropped {
+            eprintln!(
+                "not recording {} as another name for {key}: a site can only claim its www/apex twin",
+                crate::output::sanitize(&alias)
+            );
+        }
+    }
+    aliases
 }
 
 /// `rg_live_abcdEFGH…` — enough to match the admin's key list, never the secret.

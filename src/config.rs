@@ -91,6 +91,7 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
+        tighten(path);
         let raw = fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("cannot read {}: {e}", path.display())))?;
         toml::from_str(&raw)
@@ -129,6 +130,7 @@ impl Config {
                 path.display()
             )));
         }
+        tighten(path);
         Ok(())
     }
 
@@ -164,7 +166,8 @@ impl Config {
         let matches: Vec<(&str, &SiteConfig)> = self
             .sites
             .iter()
-            .filter(|(_, site)| site.aliases.contains(&name))
+            // an alias stored by an older version counts only if it would be stored now
+            .filter(|(key, site)| site.aliases.contains(&name) && alias_allowed(key, &name))
             .map(|(key, site)| (key.as_str(), site))
             .collect();
         match matches.as_slice() {
@@ -191,20 +194,109 @@ impl Config {
 }
 
 /// The names `/me` reports for a site (`site.domain`, `site.current_url`),
-/// normalized, de-duplicated, and without the key the site is stored under.
+/// normalized, de-duplicated, without the key the site is stored under, and
+/// only those [`alias_allowed`] for that key.
 pub fn aliases_from_me(me: &serde_json::Value, key: &str) -> Vec<String> {
+    split_aliases_from_me(me, key).0
+}
+
+/// [`aliases_from_me`], plus the names it dropped because the server that
+/// reported them has no say over them.
+pub fn split_aliases_from_me(me: &serde_json::Value, key: &str) -> (Vec<String>, Vec<String>) {
     let key = normalize_domain(key);
     let mut aliases = Vec::new();
+    let mut dropped = Vec::new();
     for pointer in ["/site/domain", "/site/current_url"] {
         let Some(raw) = me.pointer(pointer).and_then(serde_json::Value::as_str) else {
             continue;
         };
         let alias = normalize_domain(raw);
-        if !alias.is_empty() && alias != key && !aliases.contains(&alias) {
+        if alias.is_empty() || alias == key || aliases.contains(&alias) || dropped.contains(&alias)
+        {
+            continue;
+        }
+        if alias_allowed(&key, &alias) {
             aliases.push(alias);
+        } else {
+            dropped.push(alias);
         }
     }
-    aliases
+    (aliases, dropped)
+}
+
+/// Real Geeks' own hostnames for its sites (`example.realgeeks.com`).
+const PLATFORM_SUFFIX: &str = ".realgeeks.com";
+
+/// Whether the server at `key` may name `alias` as another name for itself.
+/// An alias makes `--site <alias>` send commands (and the key) to `key`'s
+/// server, so a server must not be able to claim an unrelated name: a host
+/// someone was tricked into logging in to could otherwise answer for
+/// `www.yourothersite.com` and receive what was meant for it. Allowed:
+///
+/// - the www/apex twin of the host (`example.com` ⇄ `www.example.com`);
+/// - anything, when the host is a Real Geeks platform name
+///   (`*.realgeeks.com`): there Real Geeks itself answers `/me`, and the
+///   live domain it reports is the reason aliases exist.
+pub fn alias_allowed(key: &str, alias: &str) -> bool {
+    let key = normalize_domain(key);
+    let alias = normalize_domain(alias);
+    if alias.is_empty() {
+        return false;
+    }
+    let apex = |host: &str| host.strip_prefix("www.").unwrap_or(host).to_string();
+    if apex(&key) == apex(&alias) {
+        return true;
+    }
+    let host = key.split(':').next().unwrap_or_default();
+    host.ends_with(PLATFORM_SUFFIX) && host.len() > PLATFORM_SUFFIX.len()
+}
+
+/// Make the config file 0600 and its directory 0700 when other users can
+/// get at them (a directory made by hand, a copied file, an old version), and
+/// say so on stderr. Best effort: a chmod that fails is reported, not fatal.
+/// The current directory is left alone when the file has no parent.
+fn tighten(path: &Path) {
+    #[cfg(unix)]
+    {
+        let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
+        for (target, mode) in [(dir, 0o700), (Some(path), 0o600)] {
+            let Some(target) = target else { continue };
+            if let Some(message) = tighten_one(target, mode) {
+                eprintln!("warning: {message}");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// chmod `target` to `mode` if group or others have any access to it; the
+/// warning to print when something was (or could not be) changed.
+#[cfg(unix)]
+fn tighten_one(target: &Path, mode: u32) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    // not through a symlink: a planted link must not redirect the chmod
+    let meta = fs::symlink_metadata(target).ok()?;
+    if meta.file_type().is_symlink() {
+        return None;
+    }
+    let current = meta.permissions().mode() & 0o777;
+    // no bits for group or others
+    if current.trailing_zeros() >= 6 {
+        return None;
+    }
+    Some(
+        match fs::set_permissions(target, fs::Permissions::from_mode(mode)) {
+            Ok(()) => format!(
+                "{} was accessible to other users (mode {current:o}); changed it to {mode:o}",
+                target.display()
+            ),
+            Err(e) => format!(
+                "{} is accessible to other users (mode {current:o}) and could not be changed to {mode:o}: {e}",
+                target.display()
+            ),
+        },
+    )
 }
 
 /// Create a new file readable only by its owner and write `bytes` to it.
@@ -466,6 +558,40 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn loose_permissions_are_tightened_on_load_and_save() -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).map(|m| m.permissions().mode() & 0o777);
+        let base = tempfile::tempdir()?;
+        let dir = base.path().join("geekcli");
+        let path = dir.join("config.toml");
+        fs::create_dir(&dir)?;
+        fs::write(&path, "default_site = \"a.com\"\n")?;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+
+        let loaded = Config::load_from(&path).ok();
+        assert_eq!(
+            loaded.and_then(|c| c.default_site).as_deref(),
+            Some("a.com")
+        );
+        assert_eq!(mode(&dir)?, 0o700);
+        assert_eq!(mode(&path)?, 0o600);
+
+        // an existing loose directory is tightened by a save too
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o775))?;
+        assert!(Config::default().save_to(&path).is_ok());
+        assert_eq!(mode(&dir)?, 0o700);
+        assert_eq!(mode(&path)?, 0o600);
+
+        // private already: nothing to say
+        assert_eq!(tighten_one(&path, 0o600), None);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640))?;
+        assert!(tighten_one(&path, 0o600).is_some_and(|m| m.contains("mode 640")));
+        Ok(())
+    }
+
     #[test]
     fn moves_a_config_left_under_the_old_name() -> std::io::Result<()> {
         let base = tempfile::tempdir()?;
@@ -642,6 +768,54 @@ mod tests {
         assert_eq!(
             target.as_ref().map(|t| t.domain.as_str()),
             Some("www.b.com")
+        );
+        assert_eq!(target.and_then(|t| t.api_key), None);
+    }
+
+    #[test]
+    fn a_server_can_only_alias_itself_unless_it_is_a_platform_name() {
+        for (key, alias) in [
+            ("example.com", "www.example.com"),
+            ("www.example.com", "example.com"),
+            ("WWW.Example.com", "https://example.com/"),
+            ("example.realgeeks.com", "www.example.com"),
+            ("a.example.realgeeks.com", "www.example.com"),
+        ] {
+            assert!(alias_allowed(key, alias), "{key} -> {alias}");
+        }
+        for (key, alias) in [
+            ("www.evil.com", "www.victim.com"),
+            ("www.evil.com", "victim.realgeeks.com"),
+            ("evil.com", "www.evil.com.victim.com"),
+            ("realgeeks.com.evil.com", "www.victim.com"),
+            ("xrealgeeks.com", "www.victim.com"),
+            ("www.evil.com", ""),
+        ] {
+            assert!(!alias_allowed(key, alias), "{key} -> {alias}");
+        }
+    }
+
+    #[test]
+    fn aliases_a_server_cannot_claim_are_dropped() {
+        let me = serde_json::json!({"site": {
+            "domain": "www.victim.com",
+            "current_url": "https://evil.com/"
+        }});
+        let (kept, dropped) = split_aliases_from_me(&me, "www.evil.com");
+        assert_eq!(kept, vec!["evil.com".to_string()]);
+        assert_eq!(dropped, vec!["www.victim.com".to_string()]);
+        assert_eq!(aliases_from_me(&me, "www.evil.com"), kept);
+    }
+
+    #[test]
+    fn a_stored_alias_the_host_cannot_claim_is_ignored() {
+        let mut config = Config::default();
+        // as an older version would have stored it
+        config.put_site("www.evil.com", aliased("e", &["www.victim.com"]));
+        let target = resolve_target(&config, &named("www.victim.com")).ok();
+        assert_eq!(
+            target.as_ref().map(|t| t.domain.as_str()),
+            Some("www.victim.com")
         );
         assert_eq!(target.and_then(|t| t.api_key), None);
     }

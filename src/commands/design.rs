@@ -190,7 +190,7 @@ pub fn run(ctx: &Context, cmd: DesignCommand) -> Result<()> {
                 render_to(ctx, &url, out)?;
             }
             if ctx.printer.quiet {
-                println!("{url}");
+                println!("{}", crate::output::sanitize(&url));
                 return Ok(());
             }
             if ctx.printer.format == Format::Table {
@@ -199,7 +199,7 @@ pub fn run(ctx: &Context, cmd: DesignCommand) -> Result<()> {
                     cell(&result["template"]),
                     cell(result.pointer("/styles/name").unwrap_or(&Value::Null))
                 ));
-                println!("{url}");
+                println!("{}", crate::output::sanitize(&url));
                 return Ok(());
             }
             ctx.printer.raw(&result)

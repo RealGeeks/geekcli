@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::{confirm, Context};
 use crate::client::Query;
 use crate::error::{Error, Result};
-use crate::output::{cell, col, Column, Format};
+use crate::output::{cell, col, sanitize, Column, Format};
 
 pub const PATH: &str = "files/";
 
@@ -68,6 +68,7 @@ pub enum FilesSub {
     #[command(after_help = "Notes:
   - The folder must exist (files mkdir). 8,000,000 bytes max; jpg/jpeg, png, gif, ico, mp4, pdf, txt, css only. HTML, SVG, XML and scripts are refused (files are served inline from a domain shared by every site); the stored type follows the extension (of --name when given).
   - Every file's type and size is checked before anything is sent: one bad file refuses the whole run (exit 2) and names each problem, so nothing is half uploaded.
+  - The local file must itself carry an allowed extension of the same type as the stored name, and hidden files and credential folders (~/.ssh, ~/.aws, ...) are refused, so a secret cannot be published by naming it x.txt. --allow-any-source lifts these local-file checks.
   - --from-url URL makes the site fetch the file itself, e.g. to copy a file that is already on u.realgeeks.media. Only https URLs on hosts the API allows are accepted; any other host is a validation error that lists the allowed ones. When the URL does not end in a file name, pass --name with the right extension.
   - -q prints the public URL to use in --facebook-image, <img src>, footers and file settings such as HEADER_LOGO.
   - Header logo: Real Geeks recommends 400x86 px, PNG, horizontal or text-based; upload at 2x (800x172) for sharp screens.
@@ -173,7 +174,7 @@ pub fn run(ctx: &Context, cmd: FilesCommand) -> Result<()> {
         FilesSub::Url { path } => {
             let entry = ctx.client.get(&detail_path(&path)?, &Query::new())?.body;
             let url = entry.get("url").and_then(Value::as_str).unwrap_or("");
-            println!("{url}");
+            println!("{}", sanitize(url));
             Ok(())
         }
         FilesSub::Upload(args) => upload(ctx, &args),
@@ -247,9 +248,24 @@ fn results_of(body: &Value, key: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// A string field of a server document, made safe for a terminal: `-q`
+/// output is printed bare, so it gets the same control-character filter
+/// as table cells.
+fn text_of(entry: &Value, key: &str) -> String {
+    sanitize(entry.get(key).and_then(Value::as_str).unwrap_or(""))
+}
+
+/// The public URL of an entry, or its path when it has none (a folder).
+fn url_or_path(entry: &Value) -> String {
+    match entry.get("url").and_then(Value::as_str) {
+        Some(url) => sanitize(url),
+        None => text_of(entry, "path"),
+    }
+}
+
 fn print_lines(rows: &[Value], key: &str) {
     for row in rows {
-        println!("{}", row.get(key).and_then(Value::as_str).unwrap_or(""));
+        println!("{}", text_of(row, key));
     }
 }
 
@@ -346,13 +362,7 @@ fn restore(ctx: &Context, path: &str, version: Option<&str>) -> Result<()> {
     }
     if ctx.printer.quiet {
         for entry in &restored {
-            println!(
-                "{}",
-                entry
-                    .get("url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_else(|| entry.get("path").and_then(Value::as_str).unwrap_or(""))
-            );
+            println!("{}", url_or_path(entry));
         }
         return Ok(());
     }
@@ -414,13 +424,7 @@ fn with_dimensions(entry: &Value) -> Value {
 
 fn print_entry(ctx: &Context, entry: &Value) -> Result<()> {
     if ctx.printer.quiet {
-        println!(
-            "{}",
-            entry
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| entry.get("path").and_then(Value::as_str).unwrap_or(""))
-        );
+        println!("{}", url_or_path(entry));
         return Ok(());
     }
     if ctx.printer.format == Format::Table {
@@ -471,10 +475,7 @@ fn list(
     }
     if ctx.printer.quiet {
         for entry in &entries {
-            println!(
-                "{}",
-                entry.get("path").and_then(Value::as_str).unwrap_or("")
-            );
+            println!("{}", text_of(entry, "path"));
         }
         return Ok(());
     }
@@ -506,7 +507,11 @@ fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
         ));
     }
     let folder = normalize(&args.to);
-    let planned = check_uploads(&args.files, args.name.as_deref())?;
+    let planned = check_uploads(
+        &args.files,
+        args.name.as_deref(),
+        crate::sources::allow_any(),
+    )?;
     let mut uploaded = Vec::new();
     for (local, file_name) in planned {
         let bytes =
@@ -542,7 +547,7 @@ fn upload(ctx: &Context, args: &UploadArgs) -> Result<()> {
     }
     if ctx.printer.quiet {
         for entry in &uploaded {
-            println!("{}", entry.get("url").and_then(Value::as_str).unwrap_or(""));
+            println!("{}", text_of(entry, "url"));
         }
         return Ok(());
     }
@@ -558,12 +563,31 @@ pub const UPLOAD_EXTENSIONS: &[&str] = &[
 /// Largest file the upload endpoint accepts, in bytes.
 pub const UPLOAD_MAX_BYTES: u64 = 8_000_000;
 
-/// Check every local file's stored name and size before anything is sent,
-/// so a multi-file upload is refused whole instead of stopping halfway.
+/// The lower-cased extension when it is one the upload endpoint accepts.
+fn upload_extension(name: &str) -> Option<String> {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| UPLOAD_EXTENSIONS.contains(&e.as_str()))
+}
+
+/// Check every local file before anything is sent, so a multi-file upload
+/// is refused whole instead of stopping halfway: the stored name's type, the
+/// size, and that the local file is what it claims to be. The local file
+/// must itself carry an accepted extension of the same type as the stored
+/// name, and must not be a hidden file or sit in a credential folder
+/// (`sources`): otherwise `upload ~/.ssh/id_rsa --name x.txt` would publish
+/// a key. `allow_any` (`--allow-any-source`) lifts the local-file checks.
 /// Returns `(local path, stored name)` pairs in the order given.
-fn check_uploads<'a>(files: &'a [String], name: Option<&str>) -> Result<Vec<(&'a str, String)>> {
+fn check_uploads<'a>(
+    files: &'a [String],
+    name: Option<&str>,
+    allow_any: bool,
+) -> Result<Vec<(&'a str, String)>> {
     let mut planned = Vec::new();
     let mut problems = Vec::new();
+    let mut overridable = false;
     for local in files {
         let path = Path::new(local);
         let Some(file_name) = name.map(str::to_string).or_else(|| {
@@ -574,18 +598,38 @@ fn check_uploads<'a>(files: &'a [String], name: Option<&str>) -> Result<Vec<(&'a
             problems.push(format!("{local}: cannot determine a file name"));
             continue;
         };
-        let ext = Path::new(&file_name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase);
-        if !ext
-            .as_deref()
-            .is_some_and(|e| UPLOAD_EXTENSIONS.contains(&e))
-        {
+        let stored_ext = upload_extension(&file_name);
+        if stored_ext.is_none() {
             problems.push(format!(
                 "{file_name}: type not accepted (allowed: {})",
                 UPLOAD_EXTENSIONS.join(", ")
             ));
+        }
+        if !allow_any {
+            if let Some(reason) = crate::sources::why_refused(path) {
+                problems.push(format!("{local}: refused, {reason}"));
+                overridable = true;
+            } else if let Some(stored) = &stored_ext {
+                match upload_extension(local) {
+                    None => {
+                        problems.push(format!(
+                            "{local}: the local file must itself be one of {} to upload it as {file_name}",
+                            UPLOAD_EXTENSIONS.join(", ")
+                        ));
+                        overridable = true;
+                    }
+                    Some(source)
+                        if guess_content_type(&format!("x.{source}"))
+                            != guess_content_type(&format!("x.{stored}")) =>
+                    {
+                        problems.push(format!(
+                            "{local}: a .{source} file cannot be stored as {file_name} (.{stored})"
+                        ));
+                        overridable = true;
+                    }
+                    Some(_) => {}
+                }
+            }
         }
         match std::fs::metadata(path) {
             Ok(meta) if !meta.is_file() => problems.push(format!("{local}: not a file")),
@@ -599,13 +643,14 @@ fn check_uploads<'a>(files: &'a [String], name: Option<&str>) -> Result<Vec<(&'a
         planned.push((local.as_str(), file_name));
     }
     if problems.is_empty() {
-        Ok(planned)
-    } else {
-        Err(Error::Usage(format!(
-            "nothing uploaded; fix these first: {}",
-            problems.join("; ")
-        )))
+        return Ok(planned);
     }
+    let mut message = format!("nothing uploaded; fix these first: {}", problems.join("; "));
+    if overridable {
+        message.push_str(". The local-file checks keep secrets off a public site. ");
+        message.push_str(&crate::sources::override_hint());
+    }
+    Err(Error::Usage(message))
 }
 
 /// Content type from the extension, limited to what the API accepts.
