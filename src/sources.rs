@@ -3,7 +3,7 @@
 //! Bodies (`--body-file`, `--data @file`, `api -d @file`) and uploads read
 //! whatever path they are given and send it to the site, where it may end up
 //! public. An agent talked into "uploading" `~/.ssh/id_rsa` would publish a
-//! private key. So hidden files, files inside hidden directories of the home
+//! private key. So hidden files, files inside hidden directories directly in the home
 //! directory (dotfiles, `~/.ssh`, `~/.aws`, …), well-known credential
 //! directories and geekcli's own config file are refused unless the run says
 //! otherwise with `--allow-any-source` or `GEEKCLI_ALLOW_ANY_SOURCE=1`.
@@ -75,6 +75,10 @@ pub fn override_hint() -> String {
 /// folder does not reach into `~/.ssh`.
 fn refusal(path: &Path, home: Option<&Path>, config_file: Option<&Path>) -> Option<String> {
     let given = absolute(path);
+    let home = home.map(absolute);
+    let home = home.as_deref();
+    let config_abs = config_file.map(absolute);
+    let config_file = config_abs.as_deref();
     let real = std::fs::canonicalize(path).ok();
     let home_real = home.and_then(|h| std::fs::canonicalize(h).ok());
     let config_real = config_file.and_then(|c| std::fs::canonicalize(c).ok());
@@ -101,7 +105,10 @@ fn refusal(path: &Path, home: Option<&Path>, config_file: Option<&Path>) -> Opti
             {
                 return Some(format!("~/{dir} holds credentials"));
             }
-            if let Some(hidden) = inside.components().find_map(|c| match c {
+            // Only a hidden folder directly in home (~/.ssh, ~/.config, ~/.local):
+            // deeper ones are project folders, or on Windows the temp directory
+            // (AppData\Local\Temp\.tmpXXXX) that lives under the profile.
+            if let Some(hidden) = inside.components().next().and_then(|c| match c {
                 Component::Normal(name) => name.to_str().filter(|n| n.starts_with('.')),
                 _ => None,
             }) {
@@ -139,6 +146,15 @@ fn absolute(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// A Unix-style test path made absolute on Windows too (`C:/home/...`).
+    fn abs(path: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(format!("C:{path}"))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
     fn refused(path: &Path, home: &Path) -> Option<String> {
         refusal(
             path,
@@ -149,7 +165,7 @@ mod tests {
 
     #[test]
     fn credentials_and_hidden_files_are_refused() {
-        let home = Path::new("/home/agent");
+        let home = &abs("/home/agent");
         for (path, reason) in [
             ("/home/agent/.ssh/id_rsa", "~/.ssh holds credentials"),
             ("/home/agent/.aws/credentials", "~/.aws"),
@@ -166,7 +182,7 @@ mod tests {
             ),
             ("/home/agent/work/../.ssh/id_ed25519", "~/.ssh"),
         ] {
-            let why = refused(Path::new(path), home);
+            let why = refused(&abs(path), home);
             assert!(
                 why.as_deref().is_some_and(|w| w.contains(reason)),
                 "{path}: {why:?}"
@@ -176,30 +192,29 @@ mod tests {
 
     #[test]
     fn ordinary_files_are_read() {
-        let home = Path::new("/home/agent");
+        let home = &abs("/home/agent");
         for path in [
             "/home/agent/work/post.md",
             "/home/agent/work/./images/hero.png",
+            // a hidden folder deeper down (a project's, Windows' temp dir) is fine
+            "/home/agent/AppData/Local/Temp/.tmpX1/post.html",
             // hidden directories outside home (a temp dir) are fine
             "/tmp/.tmpAbC123/hero.png",
             "/var/folders/xy/T/.tmpQ/body.html",
         ] {
-            assert_eq!(refused(Path::new(path), home), None, "{path}");
+            assert_eq!(refused(&abs(path), home), None, "{path}");
         }
     }
 
     #[test]
     fn the_config_file_is_refused_wherever_it_lives() {
-        let config = Path::new("/srv/geekcli/config.toml");
-        let why = refusal(config, Some(Path::new("/home/agent")), Some(config));
+        let config = &abs("/srv/geekcli/config.toml");
+        let home = abs("/home/agent");
+        let why = refusal(config, Some(&home), Some(config));
         assert!(why.is_some_and(|w| w.contains("API keys")));
         // its neighbours are not
         assert_eq!(
-            refusal(
-                Path::new("/srv/geekcli/hero.png"),
-                Some(Path::new("/home/agent")),
-                Some(config)
-            ),
+            refusal(&abs("/srv/geekcli/hero.png"), Some(&home), Some(config)),
             None
         );
     }

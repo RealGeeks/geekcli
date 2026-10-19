@@ -193,7 +193,7 @@ Markdown to HTML.
 
 **Files geekcli will not read.** Whatever a body file, `--data @file` or
 `api -d @file` names is sent to the site, where it may be public. So hidden
-files (`.env`), anything inside a hidden folder of your home directory
+files (`.env`), anything in a hidden folder directly in your home directory
 (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, …) and
 geekcli's own `config.toml` are refused with exit 2, symlinks included.
 If you really mean to send such a file, pass `--allow-any-source` (or set
