@@ -177,7 +177,8 @@ fn print_detail(value: &Value, columns: &[Column]) -> Result<()> {
     if let Some(map) = value.as_object() {
         for (key, v) in map {
             if !shown.contains(key) {
-                table.add_row([key.clone(), truncate(&cell(v))]);
+                // keys come from the server too
+                table.add_row([sanitize(key), truncate(&cell(v))]);
             }
         }
     }
@@ -196,7 +197,7 @@ fn print_flat(value: &Value) -> Result<()> {
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(["field", "value"]);
     for (k, v) in rows {
-        table.add_row([k, truncate(&v)]);
+        table.add_row([sanitize(&k), truncate(&v)]);
     }
     writeln!(out, "{table}")?;
     Ok(())
@@ -304,7 +305,7 @@ pub fn print_error(err: &Error, format: Format) {
                 eprintln!("  retry after {retry}s");
             }
             if let Some(hint) = err.hint() {
-                eprintln!("  hint: {hint}");
+                eprintln!("  hint: {}", sanitize(hint));
             }
         }
     }
@@ -320,6 +321,16 @@ mod tests {
         assert_eq!(cell(&title), "Hi]0;PWNED[31m red2J\nnext\tcol");
     }
     use serde_json::json;
+
+    #[test]
+    fn strips_terminal_escapes_from_field_names() {
+        let doc = json!({"evil\u{1b}]52;c;cHduZWQ=\u{7}": {"\u{1b}[2Jkey": "v"}});
+        let mut rows = Vec::new();
+        flatten("", &doc, &mut rows);
+        let shown: Vec<String> = rows.iter().map(|(k, _)| sanitize(k)).collect();
+        assert_eq!(shown, vec!["evil]52;c;cHduZWQ=.[2Jkey".to_string()]);
+        assert!(shown.iter().all(|k| !k.chars().any(char::is_control)));
+    }
 
     #[test]
     fn cells_summarise_nested_values() {

@@ -17,11 +17,12 @@ is nothing to request.
 Install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/main/install.sh | sh   # macOS, Linux
-irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex        # Windows PowerShell
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.sh | sh   # macOS, Linux  x-release-please-version
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.ps1 | iex   # Windows PowerShell  x-release-please-version
 ```
 
-The scripts verify the release checksum; `geekcli --version` confirms it.
+The scripts verify the release checksum and, with the GitHub CLI logged in,
+its build-provenance attestation; `geekcli --version` confirms it.
 `geekcli update` installs a newer release later (§27); nothing updates on
 its own.
 
@@ -54,7 +55,10 @@ An expired key fails every call with `token_expired` (exit 3, with a hint);
 
 Keys are stored per site in `~/.config/geekcli/config.toml` (mode 600; `XDG_CONFIG_HOME` is honoured). The
 first stored site becomes the default; `geekcli auth use <domain>` changes it.
-`geekcli auth sites` lists what is stored.
+`geekcli auth sites` lists what is stored. On macOS and Linux, a config file
+or directory that other users can read (copied by hand, made by an old
+version) is changed back to 600/700 the next time geekcli reads or writes
+it, with a `warning:` line on stderr.
 
 A site can have two names: the one you logged in with (often
 `example.realgeeks.com`) and its live domain (say `www.example.com`), which is
@@ -67,7 +71,11 @@ either name; both refer to the same site and key. Login prints
 no aliases yet: `geekcli auth sites --refresh` asks each stored site's `/me`
 for its live domain and records it. If one alias belongs to more than one
 stored site, `--site` with it is a usage error (exit 2) that names them; pass
-a login name instead.
+a login name instead. Only names a site may answer for are recorded: its
+www/apex twin (`example.com` for `www.example.com`), or any live domain when
+the login name is a Real Geeks name (`*.realgeeks.com`), where Real Geeks
+itself reports it. A server cannot make geekcli treat an unrelated domain as
+itself; `-v` on login says what was left out.
 
 Environment variables work without a config file and are the easiest way to
 run in CI or inside an agent sandbox:
@@ -182,6 +190,14 @@ accepts `--content` / `--content-file`; use those everywhere.
 `--html`/`--html-file` (its name for sidebar items) work too, as aliases. A file
 may be `-` for stdin; add `--markdown` (or use a `.md` file) to convert
 Markdown to HTML.
+
+**Files geekcli will not read.** Whatever a body file, `--data @file` or
+`api -d @file` names is sent to the site, where it may be public. So hidden
+files (`.env`), anything inside a hidden folder of your home directory
+(`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, …) and
+geekcli's own `config.toml` are refused with exit 2, symlinks included.
+If you really mean to send such a file, pass `--allow-any-source` (or set
+`GEEKCLI_ALLOW_ANY_SOURCE=1`). `files upload` applies the same rule.
 
 ## 5. Blog posts
 
@@ -956,8 +972,12 @@ Uploads are limited to 8,000,000 bytes and to jpg/jpeg, png, gif, ico,
 mp4, pdf, txt and css. HTML, SVG, XML and scripts are refused because files
 are served inline from a domain shared by every site; use the admin for
 those. The stored content type follows the extension (of `--name` when
-given). The CLI checks every file's extension and size before sending
-any of them, so one bad file in a multi-file upload refuses the whole run
+given). The local file must itself have one of those extensions, of the
+same type as the stored name (`.JPG` may be stored as `.jpeg`; a `.md` or an
+extension-less file may not be stored as `.txt`), and must not be a hidden
+or credential file (see Body content in §4); `--allow-any-source` lifts
+those two local-file checks. The CLI checks every file's extension and size
+before sending any of them, so one bad file in a multi-file upload refuses the whole run
 with exit code 2 and a message naming each problem; nothing is half
 uploaded. Whitespace and
 slashes in names become `_`, and names ending in `_thumbnail`, `_small`,
@@ -1427,9 +1447,16 @@ run that installed it; `updated` says whether the binary was replaced.
 
 The archive is the one `install.sh` and `install.ps1` use, from the GitHub
 release for this platform (Linux always gets the static build). It is
-verified against the `.sha256` published beside it and against the digest
-GitHub records for the asset, and the binary is replaced only after both
-pass. A failed update leaves the installed version in place. These requests
+verified against the `.sha256` published beside it, against the digest
+GitHub records for the asset, and against its build-provenance attestation:
+a Sigstore signature, checked inside geekcli, that RealGeeks/geekcli's
+release workflow on `main` built exactly this archive (what
+`gh attestation verify` checks). The binary is replaced only after all
+three pass. When the attestation is missing or does not verify, the update
+stops with exit 1 and nothing changes; `GEEKCLI_SKIP_PROVENANCE=1` skips that
+one check for a mirror that cannot reach GitHub, and says so. Setting
+`GEEKCLI_REPO` (a fork) prints a warning on stderr, and only builds attested
+by RealGeeks/geekcli are installed from it. A failed update leaves the installed version in place. These requests
 go to GitHub and never carry the site's API key.
 
 On a terminal, any command says once a day (on stderr) when a newer release

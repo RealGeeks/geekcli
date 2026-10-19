@@ -60,6 +60,14 @@ fn parse(out: &[u8]) -> Value {
         .unwrap_or_else(|e| panic!("not JSON: {e}\n{}", String::from_utf8_lossy(out)))
 }
 
+/// The JSON error document: the last line of stderr, after any warnings
+/// (every test here points GEEKCLI_UPDATE_API_URL at a mock, which warns).
+fn parse_error(stderr: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(stderr);
+    let last = text.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("");
+    parse(last.as_bytes())
+}
+
 #[test]
 fn check_reports_a_newer_release_and_installs_nothing() {
     let mut env = Env::new();
@@ -106,8 +114,11 @@ fn an_unknown_tag_is_not_found() {
         .unwrap();
 
     assert_eq!(out.status.code(), Some(4));
-    let err = parse(&out.stderr);
+    let err = parse_error(&out.stderr);
     assert_eq!(err["error"]["code"], "not_found");
+    // a redirected release source is announced in every output mode
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .starts_with("warning: looking for releases somewhere other than RealGeeks/geekcli"));
     assert!(err["error"]["message"].as_str().unwrap().contains("v0.0.1"));
 }
 
@@ -119,7 +130,7 @@ fn a_release_without_this_platform_fails_before_downloading() {
     let out = env.cmd().arg("update").output().unwrap();
 
     assert_eq!(out.status.code(), Some(1));
-    let err = parse(&out.stderr);
+    let err = parse_error(&out.stderr);
     assert!(err["error"]["message"]
         .as_str()
         .unwrap()
@@ -225,6 +236,14 @@ mod install {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
+    /// Mock GitHub's attestation lookup for `digest`.
+    fn attestations(env: &mut Env, digest: &str) -> mockito::Mock {
+        env.server.mock(
+            "GET",
+            format!("/repos/RealGeeks/geekcli/attestations/sha256:{digest}").as_str(),
+        )
+    }
+
     #[test]
     fn update_replaces_the_binary_after_the_checksum_passes() {
         let mut env = Env::new();
@@ -232,12 +251,18 @@ mod install {
         let binary = copy_of_binary(dir.path());
         let bytes = archive(&release_target().unwrap());
         let download = publish(&mut env, &bytes, &sha256(&bytes));
+        // a test archive has no real attestation: this is the documented way past it
+        let lookup = attestations(&mut env, &sha256(&bytes)).expect(0).create();
 
         let out = env
             .configure(Command::new(&binary))
+            .env("GEEKCLI_SKIP_PROVENANCE", "1")
             .arg("update")
             .output()
             .unwrap();
+        lookup.assert();
+        assert!(String::from_utf8_lossy(&out.stderr)
+            .contains("not checking the archive's build provenance"));
 
         assert!(
             out.status.success(),
@@ -251,6 +276,70 @@ mod install {
         assert_eq!(version_of(&binary), "geekcli 99.0.0");
         let mode = std::fs::metadata(&binary).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0o111, "the new binary is executable");
+    }
+
+    #[test]
+    fn an_archive_without_an_attestation_is_not_installed() {
+        let mut env = Env::new();
+        let dir = tempfile::tempdir().unwrap();
+        let binary = copy_of_binary(dir.path());
+        let bytes = archive(&release_target().unwrap());
+        let download = publish(&mut env, &bytes, &sha256(&bytes));
+        let lookup = attestations(&mut env, &sha256(&bytes))
+            // the site key never goes to GitHub
+            .match_header("authorization", Matcher::Missing)
+            .with_status(404)
+            .with_body(r#"{"message":"Not Found"}"#)
+            .create();
+
+        let out = env
+            .configure(Command::new(&binary))
+            .arg("update")
+            .output()
+            .unwrap();
+
+        assert_eq!(out.status.code(), Some(1));
+        download.assert();
+        lookup.assert();
+        assert!(out.stdout.is_empty(), "no result document on failure");
+        let message = parse_error(&out.stderr)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains("no build-provenance attestation"),
+            "{message}"
+        );
+        assert!(message.contains("GEEKCLI_SKIP_PROVENANCE"), "{message}");
+        assert_eq!(version_of(&binary), format!("geekcli {CURRENT}"));
+    }
+
+    #[test]
+    fn an_attestation_for_another_archive_is_not_accepted() {
+        let mut env = Env::new();
+        let dir = tempfile::tempdir().unwrap();
+        let binary = copy_of_binary(dir.path());
+        let bytes = archive(&release_target().unwrap());
+        publish(&mut env, &bytes, &sha256(&bytes));
+        // a genuine attestation (v0.12.1's), served for an archive it does not cover
+        let lookup = attestations(&mut env, &sha256(&bytes))
+            .with_body(include_str!("../src/testdata/attestation-v0.12.1.json"))
+            .create();
+
+        let out = env
+            .configure(Command::new(&binary))
+            .arg("update")
+            .output()
+            .unwrap();
+
+        assert_eq!(out.status.code(), Some(1));
+        lookup.assert();
+        let message = parse_error(&out.stderr)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(message.contains("did not verify"), "{message}");
+        assert_eq!(version_of(&binary), format!("geekcli {CURRENT}"));
     }
 
     #[test]
@@ -272,7 +361,7 @@ mod install {
 
         assert_eq!(out.status.code(), Some(1));
         download.assert();
-        assert!(parse(&out.stderr)["error"]["message"]
+        assert!(parse_error(&out.stderr)["error"]["message"]
             .as_str()
             .unwrap()
             .contains("cannot write to"));
@@ -295,7 +384,7 @@ mod install {
 
         assert_eq!(out.status.code(), Some(1));
         assert!(out.stdout.is_empty(), "no result document on failure");
-        assert!(parse(&out.stderr)["error"]["message"]
+        assert!(parse_error(&out.stderr)["error"]["message"]
             .as_str()
             .unwrap()
             .to_lowercase()

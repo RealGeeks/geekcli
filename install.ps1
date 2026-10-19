@@ -2,15 +2,16 @@
 .SYNOPSIS
   Install the geekcli CLI on Windows from its GitHub release archives.
 
-  irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.ps1 | iex   # x-release-please-version
 
   `iex` runs the script with no arguments, so -Version and -InstallDir reach it
-  only from the environment, or by turning the download into a scriptblock:
+  only from the environment, or by turning the download into a scriptblock
+  ($url being the address above):
 
     $env:GEEKCLI_VERSION = 'v0.3.0'
-    irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex
+    irm $url | iex
 
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1))) -Version v0.3.0
+    & ([scriptblock]::Create((irm $url))) -Version v0.3.0
 
   Environment / parameters:
     -Version vX.Y.Z        GEEKCLI_VERSION       a tag; default: the latest release
@@ -18,9 +19,12 @@
     GEEKCLI_REPO                                 default: realgeeks/geekcli
     GH_TOKEN / GITHUB_TOKEN                      optional; avoids GitHub's anonymous
                                                  API rate limit
+    GEEKCLI_SKIP_PROVENANCE=1                    skip the attestation check
 
-  Verifies the sha256 the Release workflow publishes beside each archive and
-  adds the install directory to the user PATH.
+  Verifies the sha256 the Release workflow publishes beside each archive and,
+  when the GitHub CLI is installed and logged in, the archive's build-provenance
+  attestation (as a build of realgeeks/geekcli's release workflow, whatever
+  GEEKCLI_REPO says); then adds the install directory to the user PATH.
 #>
 [CmdletBinding()]
 param(
@@ -73,6 +77,37 @@ try {
   $expected = ((Get-Content (Join-Path $tmp "$archive.sha256") -Raw) -split '\s+')[0].ToLower()
   $actual = (Get-FileHash (Join-Path $tmp $archive) -Algorithm SHA256).Hash.ToLower()
   if ($expected -ne $actual) { throw "checksum mismatch for $archive (expected $expected, got $actual)" }
+
+  # Build provenance: the sha256 comes from the same release as the archive,
+  # the attestation from Sigstore. Always against the official repository.
+  $official = 'RealGeeks/geekcli'
+  $signer = "https://github.com/$official/.github/workflows/release.yml@refs/heads/main"
+  $verifyCmd = "gh attestation verify $archive --repo $official --cert-identity $signer"
+  $gh = Get-Command gh -ErrorAction SilentlyContinue
+  $ghReady = $false
+  if ($gh -and -not $env:GEEKCLI_SKIP_PROVENANCE) {
+    # Windows PowerShell turns a native command's stderr into an error under 'Stop'
+    $ErrorActionPreference = 'Continue'
+    $ghReady = [bool]$token
+    if (-not $ghReady) {
+      & $gh.Source auth status *> $null
+      $ghReady = ($LASTEXITCODE -eq 0)
+    }
+    if ($ghReady) {
+      & $gh.Source attestation verify (Join-Path $tmp $archive) --repo $official --cert-identity $signer *> $null
+      $verified = ($LASTEXITCODE -eq 0)
+    }
+    $ErrorActionPreference = 'Stop'
+  }
+  if ($env:GEEKCLI_SKIP_PROVENANCE) {
+    Write-Warning 'GEEKCLI_SKIP_PROVENANCE is set; build provenance not checked'
+  } elseif ($ghReady) {
+    if (-not $verified) { throw "$archive failed its build-provenance check: it was not built by $official's release workflow, or gh could not reach GitHub. Nothing was installed. To see why: $verifyCmd (GEEKCLI_SKIP_PROVENANCE=1 skips the check)" }
+    Write-Host "Build provenance verified ($official release workflow)."
+  } else {
+    Write-Host 'Build provenance not verified (needs the GitHub CLI, logged in). To check it yourself:'
+    Write-Host "  $verifyCmd"
+  }
 
   Expand-Archive -Path (Join-Path $tmp $archive) -DestinationPath $tmp -Force
   $exe = Join-Path $tmp "$name\geekcli.exe"

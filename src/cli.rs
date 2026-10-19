@@ -80,6 +80,15 @@ pub struct Global {
         value_parser = clap::builder::BoolishValueParser::new()
     )]
     pub fail_on_warnings: bool,
+    /// Read body and upload files even from hidden paths and credential
+    /// folders (~/.ssh, ~/.aws, …), which are refused by default
+    #[arg(
+        long,
+        global = true,
+        env = crate::sources::ENV,
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub allow_any_source: bool,
 }
 
 impl Global {
@@ -168,6 +177,7 @@ pub enum Command {
 
 pub fn run(cli: Cli) -> Result<()> {
     let printer = Printer::new(cli.global.format(), cli.global.quiet);
+    crate::sources::set_allow_any(cli.global.allow_any_source);
     let notify = !matches!(
         cli.command,
         Command::Update(_) | Command::Guide(_) | Command::Completions { .. }

@@ -60,12 +60,15 @@ pub fn read_body(
     }))
 }
 
+/// Read a body file, or stdin for `-`. Files that look like secrets (hidden
+/// files, `~/.ssh`, the config file) are refused; see [`crate::sources`].
 pub fn read_file_or_stdin(path: &str) -> Result<String> {
     if path == "-" {
         let mut buf = String::new();
         io::stdin().read_to_string(&mut buf)?;
         return Ok(buf);
     }
+    crate::sources::check(Path::new(path))?;
     fs::read_to_string(path).map_err(|e| Error::Io(format!("cannot read {path}: {e}")))
 }
 

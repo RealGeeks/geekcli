@@ -95,20 +95,28 @@ and the rules that keep a live site safe.
 
 macOS and Linux:
 
+<!-- x-release-please-start-version -->
 ```bash
-curl -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/realgeeks/geekcli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.ps1 | iex
 ```
+<!-- x-release-please-end -->
 
-The scripts pick the archive for your platform from the latest
+The scripts come from the latest release's tag, not from `main`, so what
+you pipe into a shell is what that release was tested with. They pick the
+archive for your platform from the latest
 [GitHub release](https://github.com/RealGeeks/geekcli/releases), verify its
-sha256, and install `geekcli` (`/usr/local/bin` or `~/.local/bin`;
-`%LOCALAPPDATA%\Programs\geekcli` on Windows, added to your PATH).
+sha256 and, when the [GitHub CLI](https://cli.github.com/) is installed and
+logged in, its build-provenance attestation (`gh attestation verify`), and
+install `geekcli` (`/usr/local/bin` or `~/.local/bin`;
+`%LOCALAPPDATA%\Programs\geekcli` on Windows, added to your PATH). Without
+`gh` they say that provenance was not checked and print the command to check
+it yourself.
 
 `GEEKCLI_INSTALL_DIR` changes the destination and `GEEKCLI_VERSION` pins a
 release. Prefer the environment variables when the script is piped: a flag
@@ -126,8 +134,11 @@ download was built from this repository with
 `gh attestation verify <archive> --repo RealGeeks/geekcli`.
 
 To update, run `geekcli update`: it installs the latest release over the
-binary you have, after the same sha256 check (`geekcli update --check` only
-reports whether there is one). geekcli never updates on its own; on a
+binary you have, after the same sha256 check and a check of the archive's
+build-provenance attestation against Sigstore, built into geekcli and
+pinned to this repository's release workflow (`geekcli update --check` only
+reports whether there is one; `GEEKCLI_SKIP_PROVENANCE=1` skips the
+attestation, for mirrors that cannot reach GitHub). geekcli never updates on its own; on a
 terminal it mentions a newer release once a day
 (`GEEKCLI_NO_UPDATE_CHECK=1` turns that off), and scripts never see that.
 
@@ -445,7 +456,8 @@ cargo fmt
 ```
 
 CI runs the same three on every push and PR (`.github/workflows/`), plus
-`cargo audit` nightly. PR titles must be conventional commits.
+`cargo deny` (RustSec advisories, licenses, sources) on every push and
+nightly. PR titles must be conventional commits.
 
 Releases are cut by release-please from the conventional commit history:
 merging the open "chore(main): release" PR tags a version, and the Release

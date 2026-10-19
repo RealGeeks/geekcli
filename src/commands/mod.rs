@@ -19,6 +19,7 @@ pub mod market_reports;
 pub mod nav;
 pub mod pages;
 pub mod posts;
+pub mod provenance;
 pub mod revisions;
 pub mod search;
 pub mod settings;

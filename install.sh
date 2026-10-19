@@ -1,7 +1,9 @@
 #!/bin/sh
 # Install the geekcli CLI from its GitHub release archives.
 #
-# Verifies the sha256 that the Release workflow publishes beside each archive.
+# Verifies the sha256 that the Release workflow publishes beside each archive
+# and, when the GitHub CLI is installed and logged in, the archive's
+# build-provenance attestation.
 set -eu
 
 usage() {
@@ -26,6 +28,11 @@ Options (flag or environment):
                      GEEKCLI_REPO          default: realgeeks/geekcli
                      GH_TOKEN / GITHUB_TOKEN  optional; avoids GitHub's
                                            anonymous API rate limit
+                     GEEKCLI_SKIP_PROVENANCE=1  skip the attestation check
+
+With `gh` installed and logged in (or GH_TOKEN set), the archive must pass
+`gh attestation verify` as a build of realgeeks/geekcli's release workflow,
+whatever GEEKCLI_REPO says; without `gh` the script says it could not check.
 USAGE
 }
 
@@ -62,7 +69,7 @@ arch=$(uname -m)
 case "$os" in
   Darwin) os_part="apple-darwin" ;;
   Linux) os_part="unknown-linux-musl" ;; # static: runs whatever the glibc
-  MINGW*|MSYS*|CYGWIN*) die "on Windows run install.ps1 instead: irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex" ;;
+  MINGW*|MSYS*|CYGWIN*) die "on Windows run install.ps1 instead: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.1/install.ps1 | iex" ;; # x-release-please-version
   *) die "unsupported OS: $os" ;;
 esac
 case "$arch" in
@@ -137,6 +144,22 @@ else
   actual=$(shasum -a 256 "$tmp/$archive" | cut -d' ' -f1)
 fi
 [ "$expected" = "$actual" ] || die "checksum mismatch for $archive (expected $expected, got $actual)"
+
+# Build provenance: the sha256 comes from the same release as the archive,
+# the attestation from Sigstore. Always against the official repository.
+official="RealGeeks/geekcli"
+signer="https://github.com/$official/.github/workflows/release.yml@refs/heads/main"
+verify_cmd="gh attestation verify $archive --repo $official --cert-identity $signer"
+if [ -n "${GEEKCLI_SKIP_PROVENANCE:-}" ]; then
+  say "warning: GEEKCLI_SKIP_PROVENANCE is set; build provenance not checked"
+elif command -v gh >/dev/null 2>&1 && { [ -n "$TOKEN" ] || gh auth status >/dev/null 2>&1; }; then
+  gh attestation verify "$tmp/$archive" --repo "$official" --cert-identity "$signer" >/dev/null ||
+    die "$archive failed its build-provenance check: it was not built by $official's release workflow, or gh could not reach GitHub. Nothing was installed. To see why: $verify_cmd (GEEKCLI_SKIP_PROVENANCE=1 skips the check)"
+  say "Build provenance verified ($official release workflow)."
+else
+  say "Build provenance not verified (needs the GitHub CLI, logged in). To check it yourself:"
+  say "  $verify_cmd"
+fi
 
 tar -xzf "$tmp/$archive" -C "$tmp"
 [ -f "$tmp/$name/geekcli" ] || die "$archive did not contain $name/geekcli"
