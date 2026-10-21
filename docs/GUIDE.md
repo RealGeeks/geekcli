@@ -1127,10 +1127,11 @@ These rules come from watching real pages break.
 `strong`/`em`/`u`/`s`, `sub`/`sup`, `blockquote`, `pre`/`code`, tables,
 `div`, `span`, `figure`/`figcaption`, `section`, `article`, `header`,
 `footer`, `nav`, `aside`, `main`, `address`, `details`/`summary`, `dl`,
-`time`, `small`, `mark`, `abbr`, `cite`, and `iframe` only for YouTube or
-Vimeo over https. Attributes: `class`, `id`, `style`, `title`, `href`,
+`time`, `small`, `mark`, `abbr`, `cite`, and `iframe` only for YouTube,
+Vimeo or the Google Maps Embed API (`https://www.google.com/maps/embed/v1/`)
+over https. Attributes: `class`, `id`, `style`, `title`, `href`,
 `target`, `rel`, `src`, `srcset`, `sizes`, `alt`, `width`, `height`,
-`loading`, table spans, `role`, `aria-*`, `open`, `datetime` and the
+`loading`, `referrerpolicy`, table spans, `role`, `aria-*`, `open`, `datetime` and the
 microdata attributes. **It drops** `script` (except JSON-LD, below),
 `button`, forms and inputs, `video`/`audio`, event handlers,
 `javascript:` links, `data-*` and any other attribute (a
