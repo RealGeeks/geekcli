@@ -2,7 +2,7 @@
 .SYNOPSIS
   Install the geekcli CLI on Windows from its GitHub release archives.
 
-  irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.2/install.ps1 | iex   # x-release-please-version
+  irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.ps1 | iex   # x-release-please-version
 
   `iex` runs the script with no arguments, so -Version and -InstallDir reach it
   only from the environment, or by turning the download into a scriptblock

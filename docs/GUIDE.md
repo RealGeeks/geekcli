@@ -17,8 +17,8 @@ is nothing to request.
 Install:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.2/install.sh | sh   # macOS, Linux  x-release-please-version
-irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.2/install.ps1 | iex   # Windows PowerShell  x-release-please-version
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.sh | sh   # macOS, Linux  x-release-please-version
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.ps1 | iex   # Windows PowerShell  x-release-please-version
 ```
 
 The scripts verify the release checksum and, with the GitHub CLI logged in,
