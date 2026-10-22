@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.3](https://github.com/RealGeeks/geekcli/compare/v0.12.2...v0.12.3) (2026-10-22)
+
+
+### Bug Fixes
+
+* **deps:** update rustls-webpki and webpki roots to drop distrusted emSign certificates ([#84](https://github.com/RealGeeks/geekcli/issues/84)) ([1b2694a](https://github.com/RealGeeks/geekcli/commit/1b2694add98a1d7a67b9694072823aed9ee77ed8))
+* Google Maps Embed API iframes are kept by the sanitizer ([#83](https://github.com/RealGeeks/geekcli/issues/83)) ([4b1b568](https://github.com/RealGeeks/geekcli/commit/4b1b568b9b6d41563bb690f9d58cea73b4dd0e85))
+
 ## [0.12.2](https://github.com/RealGeeks/geekcli/compare/v0.12.1...v0.12.2) (2026-10-19)
 
 
