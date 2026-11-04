@@ -95,7 +95,7 @@ src/
     ├── area_pages.rs
     ├── agent_pages.rs # agent landing pages (+ `agents` CRM list); reuses pages helpers
     ├── market_reports.rs # market report pages (search, sold_within, header); reuses pages helpers
-    ├── home_page.rs
+    ├── home_page.rs   # the home page; alfred's modules (--sections/--section-effect/--area, sections, items)
     ├── nav.rs         # navigation bar links (bars are fixed)
     ├── sidebars.rs    # sidebars and html/links items
     ├── footers.rs     # shared footer HTML blocks
@@ -103,6 +103,7 @@ src/
     ├── design.rs      # template + colour scheme; preview link rendered via snapshot::render
     ├── banners.rs     # banners; pages attach one with --banner (pages::AttachArgs)
     ├── featured.rs    # Featured Pages tile groups (anna-modern home page)
+    ├── featured_areas.rs # featured areas (footer areas column, alfred Neighborhoods)
     ├── files.rs       # media bucket files; multipart upload via Client::post_multipart; versions/deleted/restore
     ├── snapshot.rs    # PNG of a page via an installed Chrome over DevTools (headless_chrome crate)
     ├── inspect.rs     # DOM queries and assertions on a rendered page, same browser
