@@ -10,6 +10,7 @@ pub mod blog_home;
 pub mod categories;
 pub mod design;
 pub mod featured;
+pub mod featured_areas;
 pub mod files;
 pub mod footers;
 pub mod guide;
@@ -47,6 +48,7 @@ pub mod heading {
     pub const SEARCH: &str = "Search & listings";
     pub const SEO: &str = "SEO";
     pub const LAYOUT: &str = "Layout & display";
+    pub const ALFRED: &str = "alfred home page";
 }
 
 pub struct Context {

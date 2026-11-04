@@ -5,9 +5,9 @@ use clap_complete::Shell;
 
 use crate::client::Client;
 use crate::commands::{
-    agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured, files,
-    footers, guide, home_page, inspect, market_reports, nav, pages, posts, search, settings,
-    sidebars, snapshot, templates, update, Context,
+    agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured,
+    featured_areas, files, footers, guide, home_page, inspect, market_reports, nav, pages, posts,
+    search, settings, sidebars, snapshot, templates, update, Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -149,6 +149,9 @@ pub enum Command {
     Banners(banners::BannersCommand),
     /// Featured Pages tile groups for the anna-modern home page
     Featured(featured::FeaturedCommand),
+    /// Featured areas: the footer's areas column, and alfred's Neighborhoods module
+    #[command(name = "featured-areas")]
+    FeaturedAreas(featured_areas::FeaturedAreasCommand),
     /// Site settings
     Settings(settings::SettingsCommand),
     /// Template and colour scheme, with unsaved previews
@@ -238,6 +241,7 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::Footers(cmd) => footers::run(&ctx, cmd),
                 Command::Banners(cmd) => banners::run(&ctx, cmd),
                 Command::Featured(cmd) => featured::run(&ctx, cmd),
+                Command::FeaturedAreas(cmd) => featured_areas::run(&ctx, cmd),
                 Command::Settings(cmd) => settings::run(&ctx, cmd),
                 Command::Design(cmd) => design::run(&ctx, cmd),
                 Command::Files(cmd) => files::run(&ctx, cmd),

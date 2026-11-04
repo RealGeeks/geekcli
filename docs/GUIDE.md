@@ -512,7 +512,9 @@ geekcli home-page update --featured-agents null                          # no ag
   its content as plain text, the photo its `Agent Photo` area and the link
   its slug. Fix a placeholder bio or a missing photo with `pages update`,
   not here. Cards show on the anna-modern home page, and in the anna
-  sidebar when the `ENABLE_FEATURED_AGENTS_IN_SIDEBAR` setting is on.
+  sidebar when the `ENABLE_FEATURED_AGENTS_IN_SIDEBAR` setting is on. On
+  alfred the first one is the About module.
+- On alfred the home page is a stack of modules: §30 (`geekcli guide alfred`).
 
 API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
 
@@ -781,6 +783,9 @@ API reference: [Footers](https://developers.realgeeks.com/content-api/navigation
 
 ## 15. Featured Pages tiles and landscape images
 
+(On alfred the Buy and Sell cards are `home-page items set tile` and the
+area cards are `featured-areas`, §30; `featured` groups don't show there.)
+
 On anna-modern the home page can show a **Featured Pages** block: a titled
 group of up to twelve tiles, each with a background image, the area name,
 button text and a page link. This is the native version of an area grid.
@@ -884,7 +889,8 @@ API reference: [Site settings](https://developers.realgeeks.com/content-api/desi
 ## 18. Design: template, colours and fonts
 
 A site's look is a **template** (design family: `miranda`, `miranda-thin`,
-`molly`, `anna`, `anna-modern`) and a **colour scheme**: a named variation
+`molly`, `anna`, `anna-modern`, and `alfred` where Real Geeks has offered it,
+§30) and a **colour scheme**: a named variation
 of that template plus variable values. CSS is generated from these, so a
 change is live immediately.
 
@@ -917,7 +923,7 @@ snapshot the home page, a content page and a post.
 
 ### Fonts
 
-On anna and anna-modern the fonts are two settings: `HEADING_FONT`
+On anna, anna-modern and alfred the fonts are two settings: `HEADING_FONT`
 (headings and the home page headline) and `BODY_FONT` (body text,
 navigation and buttons).
 
@@ -1550,3 +1556,61 @@ geekcli market-reports delete /riverside-market/
   page so visitors find it.
 
 API reference: [Market report pages](https://developers.realgeeks.com/content-api/site-pages/#market-report-pages).
+
+## 30. The alfred design
+
+alfred (beta, offered to a site by Real Geeks) builds its home page from
+modules between a full-screen hero and a contact form, not from a page
+body. People call its parts by what they see; this is where each lives.
+
+```bash
+geekcli home-page sections                                   # module order, every module's rows, what's empty
+geekcli home-page update --sections about,listings,buy-sell-value,neighborhoods,journal
+geekcli home-page update --section-effect listings=stagger --section-effect about=parallax
+geekcli home-page update --area Hero_Eyebrow="Westside - Estates" --area Listings_Layout=carousel
+geekcli home-page update --area Hero_Poster=null             # clear an area
+geekcli home-page items get tile
+geekcli home-page items set tile --data @tiles.json          # the full list, in order
+geekcli featured-areas set city=Brentwood "city=Pacific Palisades"
+```
+
+| What people call it | Where it lives |
+| --- | --- |
+| Turn modules on or off, reorder them | `home-page update --sections` (left out = off; `none` = all off) |
+| Hero headline / text under it | `--search-header` / `--search-subheader` |
+| Hero eyebrow, layout (bleed, split, centered), darkening, search box, focal point, motion, video poster | `--area Hero_Eyebrow=…`, `Hero_Variant`, `Hero_Overlay`, `Hero_Search`, `Focal_Point`, `Hero_Motion`, `Hero_Poster` |
+| Hero image or video | the `HEADER_IMAGE` setting, or the page's `--landscape` |
+| Recognition / stats band | `recognition`; rows `items set stat` (title = figure, text = label; up to 4) |
+| About / Meet the agent | `about`; the home page `--content`, else the bio of the first `--featured-agents` page (its photo is that page's Agent Photo area); awards under it: `items set award` |
+| Team | `team`; every Agent Detail page with a photo; needs two or more |
+| Press / As featured in | `press`; `items set press` (`home-page sections` lists a library of ready-made logos) |
+| Listings / The Collection | `listings`; the page's search and `--number-of-properties`; layout `--area Listings_Layout=grid\|carousel\|featured` |
+| Buy / Sell / Value | `buy-sell-value`; the two cards are `items set tile` (text = eyebrow, title, link, meta = button label, square image), **not** `--tile-group`; the Value card is the home valuation form, shown when valuation is on |
+| Neighborhoods | `neighborhoods`; `featured-areas set` (first six), one `items set neighborhood` row each for its photo (meta = `attribute\|\|value`) |
+| Testimonials / client stories | `testimonials`; `items set testimonial` (text = quote, title = name) |
+| Film / signature video | `film`; `--area Film_Video=<mp4 URL>`, `Film_Poster`, `Film_Title`, `Film_Text` |
+| Journal | `journal`; the three latest published posts |
+| Contact | always last; wording `--area Contact_Title=…` etc.; phone and address are settings |
+| Any eyebrow, title or button label | `--area <Module>_…`; `home-page get` lists every area in `extra_content_areas` |
+| Module background photo or video | `--area Recognition_Background=…`, `Testimonials_Background`, `Contact_Background` |
+| Scroll effects | `--section-effect MODULE=EFFECT`: fade, stagger, parallax, pinned, unveil, watermark, horizontal (neighborhoods), none |
+| Top menu / the full-screen menu's side column / footer columns | `nav` bars `top_primary` (first three show in the bar) / `top_secondary` (the Drawer) / `bottom_primary`, `bottom_secondary` |
+| Palette (Noir, Coastal, Midnight…) | `design set --variation`; each brings its fonts, corners and nav layout |
+| Fonts | `HEADING_FONT` / `BODY_FONT` (§18); blank follows the palette |
+
+**A module that is switched on but has nothing to show is left off the
+page, with no error.** After `home-page update` and `items set`, a `note:`
+line on stderr names each such module and what it needs (also
+`empty_sections` in the result), and another names each choice that does
+nothing yet, such as parallax on a module with no pictures or a link label
+with nowhere to link (`inactive_settings`). Act on them before reporting
+success.
+
+- `--section-effect` merges onto the page's current effects (the API takes
+  the whole object); `--area` merges too, and `KEY=null` clears one.
+- `items set` replaces the whole list for that kind: `items get` first and
+  send every row back.
+- Listing cards, disclaimers and every page other than the home page and
+  SEO Fast Track pages are shared with anna-modern.
+
+API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
