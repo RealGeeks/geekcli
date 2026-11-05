@@ -7,7 +7,7 @@ use crate::client::Client;
 use crate::commands::{
     agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured, files,
     footers, guide, home_page, inspect, market_reports, nav, pages, posts, search, settings,
-    sidebars, snapshot, templates, update, Context,
+    sidebars, snapshot, templates, update, valuation_pages, Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -134,6 +134,9 @@ pub enum Command {
     /// Market report pages (statistics and listing tables for one search)
     #[command(name = "market-reports")]
     MarketReports(market_reports::MarketReportsCommand),
+    /// Home valuation landing pages ("What's your home worth?" seller lead pages)
+    #[command(name = "valuation-pages")]
+    ValuationPages(valuation_pages::ValuationPagesCommand),
     /// The site's home page
     #[command(name = "home-page")]
     HomePage(home_page::HomePageCommand),
@@ -230,6 +233,7 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::AgentPages(cmd) => agent_pages::run(&ctx, cmd),
                 Command::Agents => agent_pages::agents(&ctx),
                 Command::MarketReports(cmd) => market_reports::run(&ctx, cmd),
+                Command::ValuationPages(cmd) => valuation_pages::run(&ctx, cmd),
                 Command::HomePage(cmd) => home_page::run(&ctx, cmd),
                 Command::Templates(cmd) => templates::run(&ctx, &cmd),
                 Command::Search(cmd) => search::run(&ctx, cmd),

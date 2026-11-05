@@ -6,8 +6,8 @@ on a Real Geeks website; the second is for agents changing this repository.
 ## Using geekcli on a Real Geeks site
 
 `geekcli` is the Real Geeks command line. Today it manages a site's website
-content: blog posts and categories, content, area, agent and market report
-pages, the home page, navigation, sidebars, footers, banners, settings,
+content: blog posts and categories, content, area, agent, market report and
+home valuation pages, the home page, navigation, sidebars, footers, banners, settings,
 design and uploaded files.
 
 Install:
@@ -53,7 +53,7 @@ The rules that keep a live site safe:
    asked: HTML was stripped, or a search value matched nothing. Fix it and
    write again. `--fail-on-warnings` turns them into exit 5.
 6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
-   page, market report, post, footer, sidebar or navigation bar (and
+   page, market report, valuation page, post, footer, sidebar or navigation bar (and
    `settings revisions` / `design revisions` before those), so a bad result
    is one `revert` away. A deleted or overwritten file comes back with
    `files restore` for 90 days.
@@ -95,6 +95,7 @@ src/
     ├── area_pages.rs
     ├── agent_pages.rs # agent landing pages (+ `agents` CRM list); reuses pages helpers
     ├── market_reports.rs # market report pages (search, sold_within, header); reuses pages helpers
+    ├── valuation_pages.rs # home valuation landing pages (search_headline, placeholder, landscape); reuses pages helpers
     ├── home_page.rs
     ├── nav.rs         # navigation bar links (bars are fixed)
     ├── sidebars.rs    # sidebars and html/links items

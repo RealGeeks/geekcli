@@ -2,8 +2,8 @@
 
 `geekcli` is the Real Geeks command line. It works on one Real Geeks website at
 a time through the site's API (`/api/v3/`): blog posts and categories, content,
-area, agent and market report pages, the home page, navigation, sidebars,
-footers, banners, settings, design and files. This guide is the contract an
+area, agent, market report and home valuation pages, the home page,
+navigation, sidebars, footers, banners, settings, design and files. This guide is the contract an
 automated caller can rely on.
 
 The API itself is documented at <https://developers.realgeeks.com/content-api/>,
@@ -367,7 +367,7 @@ subcommands: `revisions` (list), `revision` (preview) and `revert` (undo).
 
 | Resource | Commands | What a revision covers |
 | --- | --- | --- |
-| content, agent and market report pages | `pages`, `agent-pages`, `market-reports` | every writable field, including slug, parent, title, meta fields, banner, the landscape image and `agent_id` |
+| content, agent, market report and valuation pages | `pages`, `agent-pages`, `market-reports`, `valuation-pages` | every writable field, including slug, parent, title, meta fields, banner, the landscape image and `agent_id` |
 | area pages | `area-pages` | every writable field |
 | home page | `home-page` | every writable field |
 | blog posts | `posts` | every writable field, including categories and the comment switches |
@@ -1157,6 +1157,7 @@ JavaScript), a signed-in person adds it in the site's admin:
    | area page | `https://<site>/admin/content/areapage/<id>/change/` |
    | agent page | `https://<site>/admin/content/agentlandingpage/<id>/change/` |
    | market report page | `https://<site>/admin/content/marketreportpage/<id>/change/` |
+   | valuation page | `https://<site>/admin/content/valuationpage/<id>/change/` |
    | home page | `https://<site>/admin/content/homepage/` |
    | post | `https://<site>/admin/blog/post/<id>/change/` |
    | footer | `https://<site>/admin/content/footer/<id>/change/` |
@@ -1550,3 +1551,46 @@ geekcli market-reports delete /riverside-market/
   page so visitors find it.
 
 API reference: [Market report pages](https://developers.realgeeks.com/content-api/site-pages/#market-report-pages).
+
+## 30. Home valuation pages
+
+A home valuation page is the site's "What's your home worth?" landing page:
+a hero image, a headline and an address box. A visitor types their address
+and goes on to an estimate of their home's value, and the site gets a
+seller lead. Sites often have one per city or neighborhood they farm. They
+are separate from `pages`: neither list shows the other.
+
+```bash
+geekcli valuation-pages create --slug riverside-home-value --anchor-text "Riverside Home Value" \
+    --search-headline "<h3>What is your Riverside home worth?</h3><h4>A free estimate in seconds, from recent sales near you.</h4>" \
+    --search-input-placeholder "e.g. 4120 Main St, Riverside, CA" \
+    --title "Riverside Home Value Estimate" --landscape https://u.realgeeks.media/<site>/riverside.jpg \
+    --landscape-alt "Downtown Riverside"
+geekcli valuation-pages list
+geekcli valuation-pages update /riverside-home-value/ --search-input-placeholder ""
+geekcli valuation-pages revisions /riverside-home-value/ --limit 1
+geekcli valuation-pages delete /riverside-home-value/
+```
+
+- They only show while the site has Seller Leads (the home valuation tool)
+  on. While it is off the pages answer 404, `list` and `get` print a
+  `valuation_disabled` warning, and `create` and `update` fail with
+  `valuation_disabled` (exit 6); `delete` still works. Only a site admin
+  can turn Seller Leads on, at `/admin/valuation/`: tell your human rather
+  than working around it.
+- `--search-headline` (alias `--headline`) is HTML over the address box,
+  sanitized like page content and never empty. Without it a new page gets
+  the standard "What's Your Home Worth?" headline. It sits on the hero
+  image, so keep it to a heading and one short sentence: an `<h3>` and an
+  `<h4>` is the usual shape.
+- `--search-input-placeholder` (alias `--placeholder`) is the example text
+  in the address box, 50 characters at most (default "Enter Your Home
+  Address"); `""` leaves the box empty.
+- `--landscape` is the hero image, as on content pages (§15).
+- There is no content, template, sidebar, footer, banner or search: the
+  layout is fixed. The page is live as soon as it is created; link it from
+  the navigation, the home page or an area page so visitors find it.
+- Snapshot the page after a change (`geekcli snapshot /riverside-home-value/
+  --mobile`): a long headline pushes the address box down on a phone.
+
+API reference: [Home valuation pages](https://developers.realgeeks.com/content-api/site-pages/#home-valuation-pages).
