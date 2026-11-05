@@ -7,8 +7,8 @@
 [![MSRV 1.88](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
 
 The Real Geeks command line. `geekcli` manages a Real Geeks website: blog
-posts and categories, content, area, agent and market report pages, the home
-page, navigation, sidebars, footers, banners, settings, design and uploaded
+posts and categories, content, area, agent, market report and home valuation
+pages, the home page, navigation, sidebars, footers, banners, settings, design and uploaded
 files. It is
 built to be driven by scripts and AI agents as much as by people: JSON on
 stdout when piped, JSON errors on stderr, stable exit codes, and a built-in
@@ -35,7 +35,8 @@ Most real estate websites can only be changed by clicking through an admin.
 A Real Geeks website can be run by the AI tools you already use:
 
 - **The whole site is an open, documented API.** Blog posts, pages,
-  neighborhood (area) pages, market report pages, the home page, navigation,
+  neighborhood (area) pages, market report and home valuation pages, the home
+  page, navigation,
   sidebars, footers, banners, settings, design and files, all described in the
   [Content API documentation](https://developers.realgeeks.com/content-api/).
 - **Two ways in.** Connect Claude or ChatGPT to the site and ask in plain
@@ -266,7 +267,8 @@ agents to work that way.
 
 - **Drafts first**: new posts stay drafts until `geekcli posts publish`.
   Drafts and scheduled posts are not visible to visitors or search engines.
-- **Undo**: pages, area and agent pages, market reports, posts, footers, the
+- **Undo**: pages, area and agent pages, market reports, valuation pages,
+  posts, footers, the
   home page, sidebars, navigation bars, Featured Pages groups, banners,
   settings and design all keep a history. `geekcli pages revisions /buying/`
   lists versions and `geekcli pages revert /buying/ <id>` goes back to one;
@@ -361,6 +363,7 @@ Highlights:
   wrong default for automation.
 - **Undo**: `revisions`, `revision <ref> <id>` and `revert <ref> <id>` list,
   preview and undo saves on pages, agent pages, area pages, market reports,
+  valuation pages,
   blog posts, footers, the home page, sidebars, navigation bars, Featured
   Pages groups and banners; `settings` and `design` have the same three
   without a `<ref>`. `files versions`, `files deleted` and `files restore`
@@ -432,7 +435,8 @@ for people and coding agents who work in a terminal or want to script
 repeated tasks.
 
 **Can it do everything the admin can?** It covers blog posts and categories,
-pages, area, agent and market report pages, the home page, navigation,
+pages, area, agent, market report and home valuation pages, the home page,
+navigation,
 sidebars, footers, banners, featured pages, editable settings, design and
 files. Leads, the CRM and
 billing stay in the admin and the CRM.

@@ -110,6 +110,9 @@ impl Error {
                 (_, 413) => Some(
                     "the request body is too large; upload files with `files upload` and keep JSON bodies small",
                 ),
+                ("valuation_disabled", _) => Some(
+                    "Seller Leads is off on this site, so its valuation pages are hidden and cannot be changed; only a site admin can turn it on, at /admin/valuation/",
+                ),
                 ("conflict", 409) => Some(
                     "if two writes raced on the same slug or name, retry; otherwise see the message for the flag that overrides the guard",
                 ),
@@ -277,6 +280,9 @@ mod tests {
         assert!(api(426, "client_too_old")
             .hint()
             .is_some_and(|h| h.contains("geekcli update")));
+        assert!(api(409, "valuation_disabled")
+            .hint()
+            .is_some_and(|h| h.contains("/admin/valuation/")));
         assert!(api(404, "not_found").hint().is_none());
         assert!(api(422, "validation_error").hint().is_none());
     }

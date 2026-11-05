@@ -183,6 +183,7 @@ mod tests {
             "footers",
             "banners",
             "market",
+            "valuation",
             "workflow",
             "update",
         ] {
