@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.5](https://github.com/RealGeeks/geekcli/compare/v0.12.4...v0.12.5) (2026-11-10)
+
+
+### Bug Fixes
+
+* trust the system certificate store so geekcli works behind Zscaler ([#99](https://github.com/RealGeeks/geekcli/issues/99)) ([c233c69](https://github.com/RealGeeks/geekcli/commit/c233c6955e897fdb9c5ad8270df892c623dc1623))
+
 ## [0.12.4](https://github.com/RealGeeks/geekcli/compare/v0.12.3...v0.12.4) (2026-11-05)
 
 
