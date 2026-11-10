@@ -89,6 +89,26 @@ run in CI or inside an agent sandbox:
 
 Precedence: flags, then environment, then the config file.
 
+Behind a proxy that inspects HTTPS (Zscaler, Netskope and the like), the
+proxy re-signs each site's certificate with its own root. geekcli trusts
+its built-in roots plus the operating system's certificate store, so where
+the proxy's client installed its root in the macOS Keychain or the Windows
+certificate store, nothing needs setting. Elsewhere (Linux, CI, containers):
+
+| Variable        | Meaning                                                    |
+| --------------- | ---------------------------------------------------------- |
+| `SSL_CERT_FILE` | PEM bundle to trust instead of the system store            |
+| `SSL_CERT_DIR`  | directories of PEM files, likewise                         |
+| `HTTPS_PROXY`   | explicit proxy URL, only for a proxy you must name         |
+| `NO_PROXY`      | hosts that skip `HTTPS_PROXY`                              |
+
+`SSL_CERT_FILE` replaces the system store rather than adding to it, so give
+it a full bundle with the proxy's root appended (for example a copy of
+`/etc/ssl/certs/ca-certificates.crt` plus the proxy's PEM). A certificate the
+CLI refuses fails with `network` (exit 8), a message ending
+`invalid peer certificate: UnknownIssuer`, and a hint pointing here.
+geekcli 0.12.4 and older trusted only the built-in roots; run `geekcli update`.
+
 Keys only travel over https. Plain `http://` base URLs are refused except
 for local dev hosts (`localhost`, loopback addresses, `*.localhost`,
 `*.local`, `*.test`). A stored key is only sent to the server it was stored
@@ -1481,7 +1501,7 @@ stderr and an entry in `warnings` (§2). If it refuses the version
 | `cannot write to <dir>` (exit 1) | The binary is in a directory you cannot write, such as a root-owned `/usr/local/bin`. Re-run with `sudo`, or reinstall with `GEEKCLI_INSTALL_DIR` set to a directory you own. |
 | `rate_limited` (exit 7) | GitHub limits anonymous lookups per address. Set `GH_TOKEN` or `GITHUB_TOKEN`, or retry later. |
 | `not_found` (exit 4) | No release has that `--tag`. |
-| `network` (exit 8) | GitHub is unreachable. The update trusts the operating system's certificate store, so a corporate proxy's certificate has to be installed there. |
+| `network` (exit 8) | GitHub is unreachable. The update trusts the operating system's certificate store (or `SSL_CERT_FILE`), so a corporate proxy's certificate has to be installed there (§1). |
 
 `GEEKCLI_REPO=owner/name` updates from a fork, as it does for the install
 scripts. A binary built from source (`cargo install`) is replaced by the

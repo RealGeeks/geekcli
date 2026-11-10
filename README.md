@@ -420,6 +420,11 @@ Highlights:
 - **A character is rejected** (`422` naming it): site text is stored as
   Windows-1252, so emoji, arrows and CJK text can't be saved. Remove them or
   write them as HTML entities (`&#8594;`).
+- **`invalid peer certificate: UnknownIssuer`** (exit 8): a proxy that
+  inspects HTTPS, such as Zscaler, is in the way. Run `geekcli update`:
+  current versions trust the system certificate store, where the Zscaler
+  client installs its root. On Linux or in CI, set `SSL_CERT_FILE` to a PEM
+  bundle that includes the proxy's root (`geekcli guide setup` has details).
 - **Anything else**: add `-v` to see each request and response, and send the
   output to Real Geeks support or open a
   [GitHub issue](https://github.com/RealGeeks/geekcli/issues).
