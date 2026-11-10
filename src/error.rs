@@ -121,6 +121,9 @@ impl Error {
                 ),
                 _ => None,
             },
+            Error::Network(message) if message.contains("certificate") => Some(
+                "the site's certificate was not trusted. Behind a proxy that inspects HTTPS (Zscaler and the like), install its root certificate in the system store, or point SSL_CERT_FILE at a PEM bundle that includes it; see `geekcli guide setup`",
+            ),
             Error::Warnings(_) => Some(
                 "--fail-on-warnings is set. Any write was already applied: fix the input and run it again, or undo it (`revisions`, `revert`)",
             ),
@@ -233,7 +236,20 @@ impl From<serde_json::Error> for Error {
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
         // Strip the URL so a key in a query string never leaks into logs.
-        Error::Network(err.without_url().to_string())
+        let err = err.without_url();
+        // reqwest's own text is just "error sending request"; the reason
+        // (a refused certificate, a DNS failure) is further down the chain.
+        let mut message = err.to_string();
+        let mut source = std::error::Error::source(&err);
+        while let Some(cause) = source {
+            let text = cause.to_string();
+            if !message.contains(&text) {
+                message.push_str(": ");
+                message.push_str(&text);
+            }
+            source = cause.source();
+        }
+        Error::Network(message)
     }
 }
 
@@ -249,6 +265,19 @@ mod tests {
         assert_eq!(api(426, "upgrade_required").exit_code(), 9);
         assert_eq!(api(400, "client_too_old").exit_code(), 9);
         assert_eq!(api(400, "validation_error").exit_code(), 5);
+    }
+
+    #[test]
+    fn a_refused_certificate_points_at_the_proxy_setup() {
+        let refused = Error::Network(
+            "error sending request: client error (Connect): invalid peer certificate: UnknownIssuer".into(),
+        );
+        assert!(refused
+            .hint()
+            .is_some_and(|hint| hint.contains("SSL_CERT_FILE")));
+        assert!(Error::Network("error sending request: dns error".into())
+            .hint()
+            .is_none());
     }
 
     fn api(status: u16, code: &str) -> Error {
