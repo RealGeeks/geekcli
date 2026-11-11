@@ -7,8 +7,8 @@
 [![MSRV 1.88](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](Cargo.toml)
 
 The Real Geeks command line. `geekcli` manages a Real Geeks website: blog
-posts and categories, content, area, agent and market report pages, the home
-page, navigation, sidebars, footers, banners, settings, design and uploaded
+posts and categories, content, area, agent, market report and home valuation
+pages, the home page, navigation, sidebars, footers, banners, settings, design and uploaded
 files. It is
 built to be driven by scripts and AI agents as much as by people: JSON on
 stdout when piped, JSON errors on stderr, stable exit codes, and a built-in
@@ -35,7 +35,8 @@ Most real estate websites can only be changed by clicking through an admin.
 A Real Geeks website can be run by the AI tools you already use:
 
 - **The whole site is an open, documented API.** Blog posts, pages,
-  neighborhood (area) pages, market report pages, the home page, navigation,
+  neighborhood (area) pages, market report and home valuation pages, the home
+  page, navigation,
   sidebars, footers, banners, settings, design and files, all described in the
   [Content API documentation](https://developers.realgeeks.com/content-api/).
 - **Two ways in.** Connect Claude or ChatGPT to the site and ask in plain
@@ -97,13 +98,13 @@ macOS and Linux:
 
 <!-- x-release-please-start-version -->
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.5/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.ps1 | iex
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.5/install.ps1 | iex
 ```
 <!-- x-release-please-end -->
 
@@ -266,7 +267,8 @@ agents to work that way.
 
 - **Drafts first**: new posts stay drafts until `geekcli posts publish`.
   Drafts and scheduled posts are not visible to visitors or search engines.
-- **Undo**: pages, area and agent pages, market reports, posts, footers, the
+- **Undo**: pages, area and agent pages, market reports, valuation pages,
+  posts, footers, the
   home page, sidebars, navigation bars, Featured Pages groups, banners,
   settings and design all keep a history. `geekcli pages revisions /buying/`
   lists versions and `geekcli pages revert /buying/ <id>` goes back to one;
@@ -362,6 +364,7 @@ Highlights:
   wrong default for automation.
 - **Undo**: `revisions`, `revision <ref> <id>` and `revert <ref> <id>` list,
   preview and undo saves on pages, agent pages, area pages, market reports,
+  valuation pages,
   blog posts, footers, the home page, sidebars, navigation bars, Featured
   Pages groups and banners; `settings` and `design` have the same three
   without a `<ref>`. `files versions`, `files deleted` and `files restore`
@@ -418,6 +421,11 @@ Highlights:
 - **A character is rejected** (`422` naming it): site text is stored as
   Windows-1252, so emoji, arrows and CJK text can't be saved. Remove them or
   write them as HTML entities (`&#8594;`).
+- **`invalid peer certificate: UnknownIssuer`** (exit 8): a proxy that
+  inspects HTTPS, such as Zscaler, is in the way. Run `geekcli update`:
+  current versions trust the system certificate store, where the Zscaler
+  client installs its root. On Linux or in CI, set `SSL_CERT_FILE` to a PEM
+  bundle that includes the proxy's root (`geekcli guide setup` has details).
 - **Anything else**: add `-v` to see each request and response, and send the
   output to Real Geeks support or open a
   [GitHub issue](https://github.com/RealGeeks/geekcli/issues).
@@ -433,7 +441,8 @@ for people and coding agents who work in a terminal or want to script
 repeated tasks.
 
 **Can it do everything the admin can?** It covers blog posts and categories,
-pages, area, agent and market report pages, the home page, navigation,
+pages, area, agent, market report and home valuation pages, the home page,
+navigation,
 sidebars, footers, banners, featured pages, editable settings, design and
 files. Leads, the CRM and
 billing stay in the admin and the CRM.

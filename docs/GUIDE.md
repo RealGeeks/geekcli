@@ -2,8 +2,8 @@
 
 `geekcli` is the Real Geeks command line. It works on one Real Geeks website at
 a time through the site's API (`/api/v3/`): blog posts and categories, content,
-area, agent and market report pages, the home page, navigation, sidebars,
-footers, banners, settings, design and files. This guide is the contract an
+area, agent, market report and home valuation pages, the home page,
+navigation, sidebars, footers, banners, settings, design and files. This guide is the contract an
 automated caller can rely on.
 
 The API itself is documented at <https://developers.realgeeks.com/content-api/>,
@@ -17,8 +17,8 @@ is nothing to request.
 Install:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.sh | sh   # macOS, Linux  x-release-please-version
-irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.ps1 | iex   # Windows PowerShell  x-release-please-version
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.5/install.sh | sh   # macOS, Linux  x-release-please-version
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.5/install.ps1 | iex   # Windows PowerShell  x-release-please-version
 ```
 
 The scripts verify the release checksum and, with the GitHub CLI logged in,
@@ -88,6 +88,26 @@ run in CI or inside an agent sandbox:
 | `GEEKCLI_CONFIG_DIR` | where `config.toml` lives                         |
 
 Precedence: flags, then environment, then the config file.
+
+Behind a proxy that inspects HTTPS (Zscaler, Netskope and the like), the
+proxy re-signs each site's certificate with its own root. geekcli trusts
+its built-in roots plus the operating system's certificate store, so where
+the proxy's client installed its root in the macOS Keychain or the Windows
+certificate store, nothing needs setting. Elsewhere (Linux, CI, containers):
+
+| Variable        | Meaning                                                    |
+| --------------- | ---------------------------------------------------------- |
+| `SSL_CERT_FILE` | PEM bundle to trust instead of the system store            |
+| `SSL_CERT_DIR`  | directories of PEM files, likewise                         |
+| `HTTPS_PROXY`   | explicit proxy URL, only for a proxy you must name         |
+| `NO_PROXY`      | hosts that skip `HTTPS_PROXY`                              |
+
+`SSL_CERT_FILE` replaces the system store rather than adding to it, so give
+it a full bundle with the proxy's root appended (for example a copy of
+`/etc/ssl/certs/ca-certificates.crt` plus the proxy's PEM). A certificate the
+CLI refuses fails with `network` (exit 8), a message ending
+`invalid peer certificate: UnknownIssuer`, and a hint pointing here.
+geekcli 0.12.4 and older trusted only the built-in roots; run `geekcli update`.
 
 Keys only travel over https. Plain `http://` base URLs are refused except
 for local dev hosts (`localhost`, loopback addresses, `*.localhost`,
@@ -367,7 +387,7 @@ subcommands: `revisions` (list), `revision` (preview) and `revert` (undo).
 
 | Resource | Commands | What a revision covers |
 | --- | --- | --- |
-| content, agent and market report pages | `pages`, `agent-pages`, `market-reports` | every writable field, including slug, parent, title, meta fields, banner, the landscape image and `agent_id` |
+| content, agent, market report and valuation pages | `pages`, `agent-pages`, `market-reports`, `valuation-pages` | every writable field, including slug, parent, title, meta fields, banner, the landscape image and `agent_id` |
 | area pages | `area-pages` | every writable field |
 | home page | `home-page` | every writable field |
 | blog posts | `posts` | every writable field, including categories and the comment switches |
@@ -514,7 +534,7 @@ geekcli home-page update --featured-agents null                          # no ag
   not here. Cards show on the anna-modern home page, and in the anna
   sidebar when the `ENABLE_FEATURED_AGENTS_IN_SIDEBAR` setting is on. On
   alfred the first one is the About module.
-- On alfred the home page is a stack of modules: §30 (`geekcli guide alfred`).
+- On alfred the home page is a stack of modules: §31 (`geekcli guide alfred`).
 
 API reference: [Home page](https://developers.realgeeks.com/content-api/site-pages/#home-page).
 
@@ -784,7 +804,7 @@ API reference: [Footers](https://developers.realgeeks.com/content-api/navigation
 ## 15. Featured Pages tiles and landscape images
 
 (On alfred the Buy and Sell cards are `home-page items set tile` and the
-area cards are `featured-areas`, §30; `featured` groups don't show there.)
+area cards are `featured-areas`, §31; `featured` groups don't show there.)
 
 On anna-modern the home page can show a **Featured Pages** block: a titled
 group of up to twelve tiles, each with a background image, the area name,
@@ -890,7 +910,7 @@ API reference: [Site settings](https://developers.realgeeks.com/content-api/desi
 
 A site's look is a **template** (design family: `miranda`, `miranda-thin`,
 `molly`, `anna`, `anna-modern`, and `alfred` where Real Geeks has offered it,
-§30) and a **colour scheme**: a named variation
+§31) and a **colour scheme**: a named variation
 of that template plus variable values. CSS is generated from these, so a
 change is live immediately.
 
@@ -1163,6 +1183,7 @@ JavaScript), a signed-in person adds it in the site's admin:
    | area page | `https://<site>/admin/content/areapage/<id>/change/` |
    | agent page | `https://<site>/admin/content/agentlandingpage/<id>/change/` |
    | market report page | `https://<site>/admin/content/marketreportpage/<id>/change/` |
+   | valuation page | `https://<site>/admin/content/valuationpage/<id>/change/` |
    | home page | `https://<site>/admin/content/homepage/` |
    | post | `https://<site>/admin/blog/post/<id>/change/` |
    | footer | `https://<site>/admin/content/footer/<id>/change/` |
@@ -1486,7 +1507,7 @@ stderr and an entry in `warnings` (§2). If it refuses the version
 | `cannot write to <dir>` (exit 1) | The binary is in a directory you cannot write, such as a root-owned `/usr/local/bin`. Re-run with `sudo`, or reinstall with `GEEKCLI_INSTALL_DIR` set to a directory you own. |
 | `rate_limited` (exit 7) | GitHub limits anonymous lookups per address. Set `GH_TOKEN` or `GITHUB_TOKEN`, or retry later. |
 | `not_found` (exit 4) | No release has that `--tag`. |
-| `network` (exit 8) | GitHub is unreachable. The update trusts the operating system's certificate store, so a corporate proxy's certificate has to be installed there. |
+| `network` (exit 8) | GitHub is unreachable. The update trusts the operating system's certificate store (or `SSL_CERT_FILE`), so a corporate proxy's certificate has to be installed there (§1). |
 
 `GEEKCLI_REPO=owner/name` updates from a fork, as it does for the install
 scripts. A binary built from source (`cargo install`) is replaced by the
@@ -1557,7 +1578,50 @@ geekcli market-reports delete /riverside-market/
 
 API reference: [Market report pages](https://developers.realgeeks.com/content-api/site-pages/#market-report-pages).
 
-## 30. The alfred design
+## 30. Home valuation pages
+
+A home valuation page is the site's "What's your home worth?" landing page:
+a hero image, a headline and an address box. A visitor types their address
+and goes on to an estimate of their home's value, and the site gets a
+seller lead. Sites often have one per city or neighborhood they farm. They
+are separate from `pages`: neither list shows the other.
+
+```bash
+geekcli valuation-pages create --slug riverside-home-value --anchor-text "Riverside Home Value" \
+    --search-headline "<h3>What is your Riverside home worth?</h3><h4>A free estimate in seconds, from recent sales near you.</h4>" \
+    --search-input-placeholder "e.g. 4120 Main St, Riverside, CA" \
+    --title "Riverside Home Value Estimate" --landscape https://u.realgeeks.media/<site>/riverside.jpg \
+    --landscape-alt "Downtown Riverside"
+geekcli valuation-pages list
+geekcli valuation-pages update /riverside-home-value/ --search-input-placeholder ""
+geekcli valuation-pages revisions /riverside-home-value/ --limit 1
+geekcli valuation-pages delete /riverside-home-value/
+```
+
+- They only show while the site has Seller Leads (the home valuation tool)
+  on. While it is off the pages answer 404, `list` and `get` print a
+  `valuation_disabled` warning, and `create` and `update` fail with
+  `valuation_disabled` (exit 6); `delete` still works. Only a site admin
+  can turn Seller Leads on, at `/admin/valuation/`: tell your human rather
+  than working around it.
+- `--search-headline` (alias `--headline`) is HTML over the address box,
+  sanitized like page content and never empty. Without it a new page gets
+  the standard "What's Your Home Worth?" headline. It sits on the hero
+  image, so keep it to a heading and one short sentence: an `<h3>` and an
+  `<h4>` is the usual shape.
+- `--search-input-placeholder` (alias `--placeholder`) is the example text
+  in the address box, 50 characters at most (default "Enter Your Home
+  Address"); `""` leaves the box empty.
+- `--landscape` is the hero image, as on content pages (§15).
+- There is no content, template, sidebar, footer, banner or search: the
+  layout is fixed. The page is live as soon as it is created; link it from
+  the navigation, the home page or an area page so visitors find it.
+- Snapshot the page after a change (`geekcli snapshot /riverside-home-value/
+  --mobile`): a long headline pushes the address box down on a phone.
+
+API reference: [Home valuation pages](https://developers.realgeeks.com/content-api/site-pages/#home-valuation-pages).
+
+## 31. The alfred design
 
 alfred (beta, offered to a site by Real Geeks) builds its home page from
 modules between a full-screen hero and a contact form, not from a page

@@ -28,6 +28,7 @@ pub mod sidebars;
 pub mod snapshot;
 pub mod templates;
 pub mod update;
+pub mod valuation_pages;
 
 use std::io::{self, IsTerminal, Write};
 

@@ -1202,3 +1202,69 @@ fn market_reports_create_update_and_require_a_search() {
     lookup.assert();
     patch.assert();
 }
+
+#[test]
+fn valuation_pages_create_update_and_explain_seller_leads_off() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let post = server
+        .mock("POST", "/api/v3/content/valuation-pages/")
+        .match_body(Matcher::Json(json!({
+            "slug": "riverside-home-value",
+            "anchor_text": "Riverside Home Value",
+            "search_headline": "<h3>What is your Riverside home worth?</h3>",
+            "search_input_placeholder": "e.g. 4120 Main St",
+            "landscape_image_override": "none"
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":5,"path":"/riverside-home-value/"}"#)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "valuation-pages",
+            "create",
+            "--slug",
+            "/riverside-home-value/",
+            "--anchor-text",
+            "Riverside Home Value",
+            "--headline",
+            "<h3>What is your Riverside home worth?</h3>",
+            "--placeholder",
+            "e.g. 4120 Main St",
+            "--landscape",
+            "hide",
+        ])
+        .assert()
+        .success();
+    post.assert();
+
+    let lookup = server
+        .mock("GET", "/api/v3/content/valuation-pages/")
+        .match_query(Matcher::UrlEncoded(
+            "path".into(),
+            "/riverside-home-value/".into(),
+        ))
+        .with_body(r#"{"results":[{"id":5,"path":"/riverside-home-value/"}]}"#)
+        .create();
+    let patch = server
+        .mock("PATCH", "/api/v3/content/valuation-pages/5/")
+        .match_body(Matcher::Json(json!({ "search_input_placeholder": "" })))
+        .with_status(409)
+        .with_body(
+            r#"{"error":{"code":"valuation_disabled","message":"Seller Leads is turned off on this site"}}"#,
+        )
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "valuation-pages",
+            "update",
+            "/riverside-home-value/",
+            "--search-input-placeholder",
+            "",
+        ])
+        .assert()
+        .code(6)
+        .stderr(predicates::str::contains("/admin/valuation/"));
+    lookup.assert();
+    patch.assert();
+}

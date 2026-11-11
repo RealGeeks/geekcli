@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.12.5](https://github.com/RealGeeks/geekcli/compare/v0.12.4...v0.12.5) (2026-11-10)
+
+
+### Bug Fixes
+
+* trust the system certificate store so geekcli works behind Zscaler ([#99](https://github.com/RealGeeks/geekcli/issues/99)) ([c233c69](https://github.com/RealGeeks/geekcli/commit/c233c6955e897fdb9c5ad8270df892c623dc1623))
+
+## [0.12.4](https://github.com/RealGeeks/geekcli/compare/v0.12.3...v0.12.4) (2026-11-05)
+
+
+### Features
+
+* home valuation landing pages ([#94](https://github.com/RealGeeks/geekcli/issues/94)) ([243c0d6](https://github.com/RealGeeks/geekcli/commit/243c0d64f8351922f580712d7666b43d5f2c345c))
+
+
+### Miscellaneous Chores
+
+* release 0.12.4 ([#96](https://github.com/RealGeeks/geekcli/issues/96)) ([6ba3f40](https://github.com/RealGeeks/geekcli/commit/6ba3f40a67df159634a213d7da703884a0626b8c))
+
 ## [0.12.3](https://github.com/RealGeeks/geekcli/compare/v0.12.2...v0.12.3) (2026-10-22)
 
 
