@@ -460,18 +460,18 @@ fn retry_after(response: &Response) -> Option<u64> {
         .headers()
         .get(RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| parse_retry_after(v, chrono::Utc::now()))
+        .and_then(|v| parse_retry_after(v, jiff::Timestamp::now()))
 }
 
 /// `Retry-After` is either delay-seconds or an HTTP-date. A date in the past
 /// means "now" (0).
-fn parse_retry_after(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<u64> {
+fn parse_retry_after(value: &str, now: jiff::Timestamp) -> Option<u64> {
     let value = value.trim();
     if let Ok(secs) = value.parse() {
         return Some(secs);
     }
-    let when = chrono::DateTime::parse_from_rfc2822(value).ok()?;
-    let secs = (when.with_timezone(&chrono::Utc) - now).num_seconds();
+    let when = jiff::fmt::rfc2822::parse(value).ok()?;
+    let secs = when.timestamp().as_second() - now.as_second();
     Some(u64::try_from(secs).unwrap_or(0))
 }
 
@@ -495,7 +495,7 @@ fn quota_warning(headers: &HeaderMap) -> Option<String> {
     if let Some(reset) = num("x-ratelimit-reset") {
         // Anything past 2001-09-09 as a Unix time is a timestamp, not a delay.
         let secs = if reset >= 1_000_000_000 {
-            let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+            let now = u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0);
             reset.saturating_sub(now)
         } else {
             reset
@@ -773,9 +773,7 @@ mod tests {
 
     #[test]
     fn retry_after_takes_seconds_or_an_http_date() {
-        let now = chrono::DateTime::parse_from_rfc3339("2015-10-21T07:27:30Z")
-            .map(|d| d.with_timezone(&chrono::Utc))
-            .unwrap_or_default();
+        let now: jiff::Timestamp = "2015-10-21T07:27:30Z".parse().unwrap_or_default();
         assert_eq!(parse_retry_after(" 12 ", now), Some(12));
         assert_eq!(
             parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now),

@@ -496,7 +496,12 @@ fn publish(ctx: &Context, reference: &str, at: Option<&str>, keep_date: bool) ->
     if let Some(at) = at {
         body["publish"] = Value::String(at.to_string());
     } else if !keep_date {
-        body["publish"] = Value::String(chrono::Local::now().to_rfc3339());
+        let now = jiff::Zoned::now();
+        body["publish"] = Value::String(
+            now.timestamp()
+                .display_with_offset(now.offset())
+                .to_string(),
+        );
     }
     let updated = ctx.client.patch(&detail_path(id), &body)?.body;
     let verb = if updated.get("state").and_then(Value::as_str) == Some("scheduled") {
