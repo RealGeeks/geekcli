@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.6](https://github.com/RealGeeks/geekcli/compare/v0.12.5...v0.12.6) (2026-11-22)
+
+
+### Bug Fixes
+
+* ask for gzip/brotli responses ([#107](https://github.com/RealGeeks/geekcli/issues/107)) ([0661719](https://github.com/RealGeeks/geekcli/commit/066171927e8f4ef238627f0641bb66df19407eff))
+* replace chrono with jiff ([#108](https://github.com/RealGeeks/geekcli/issues/108)) ([33d437e](https://github.com/RealGeeks/geekcli/commit/33d437e4aaa276b621fc304ff30fff864b17f416))
+
 ## [0.12.5](https://github.com/RealGeeks/geekcli/compare/v0.12.4...v0.12.5) (2026-11-10)
 
 
