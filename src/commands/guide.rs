@@ -100,6 +100,9 @@ pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
         ("revert", "revisions and undo"),
         ("history", "revisions and undo"),
         ("restore", "files"),
+        ("search-forms", "search forms"),
+        ("forms", "search forms"),
+        ("tabs", "search forms"),
     ];
     let needle = aliases
         .iter()
