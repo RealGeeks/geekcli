@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.7](https://github.com/RealGeeks/geekcli/compare/v0.12.6...v0.12.7) (2026-11-24)
+
+
+### Features
+
+* search-forms commands for the site's search forms ([#111](https://github.com/RealGeeks/geekcli/issues/111)) ([bdb279e](https://github.com/RealGeeks/geekcli/commit/bdb279e24ff2cfa3010f7d49c300b370ec1313d3))
+
 ## [0.12.6](https://github.com/RealGeeks/geekcli/compare/v0.12.5...v0.12.6) (2026-11-22)
 
 

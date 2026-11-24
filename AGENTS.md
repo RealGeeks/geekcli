@@ -14,8 +14,8 @@ Install:
 
 <!-- x-release-please-start-version -->
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.sh | sh
-# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.ps1 | iex
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.7/install.sh | sh
+# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.7/install.ps1 | iex
 ```
 <!-- x-release-please-end -->
 
