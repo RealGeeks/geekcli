@@ -7,7 +7,8 @@ use crate::client::Client;
 use crate::commands::{
     agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured,
     featured_areas, files, footers, guide, home_page, inspect, market_reports, nav, pages, posts,
-    search, settings, sidebars, snapshot, templates, update, Context,
+    search, search_forms, settings, sidebars, snapshot, templates, update, valuation_pages,
+    Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -134,6 +135,9 @@ pub enum Command {
     /// Market report pages (statistics and listing tables for one search)
     #[command(name = "market-reports")]
     MarketReports(market_reports::MarketReportsCommand),
+    /// Home valuation landing pages ("What's your home worth?" seller lead pages)
+    #[command(name = "valuation-pages")]
+    ValuationPages(valuation_pages::ValuationPagesCommand),
     /// The site's home page
     #[command(name = "home-page")]
     HomePage(home_page::HomePageCommand),
@@ -154,6 +158,9 @@ pub enum Command {
     FeaturedAreas(featured_areas::FeaturedAreasCommand),
     /// Site settings
     Settings(settings::SettingsCommand),
+    /// The site's search forms: advanced search tabs and the home page search
+    #[command(name = "search-forms")]
+    SearchForms(search_forms::SearchFormsCommand),
     /// Template and colour scheme, with unsaved previews
     Design(design::DesignCommand),
     /// Uploaded files (images, PDFs) on the site's media bucket
@@ -233,6 +240,7 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::AgentPages(cmd) => agent_pages::run(&ctx, cmd),
                 Command::Agents => agent_pages::agents(&ctx),
                 Command::MarketReports(cmd) => market_reports::run(&ctx, cmd),
+                Command::ValuationPages(cmd) => valuation_pages::run(&ctx, cmd),
                 Command::HomePage(cmd) => home_page::run(&ctx, cmd),
                 Command::Templates(cmd) => templates::run(&ctx, &cmd),
                 Command::Search(cmd) => search::run(&ctx, cmd),
@@ -243,6 +251,7 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::Featured(cmd) => featured::run(&ctx, cmd),
                 Command::FeaturedAreas(cmd) => featured_areas::run(&ctx, cmd),
                 Command::Settings(cmd) => settings::run(&ctx, cmd),
+                Command::SearchForms(cmd) => search_forms::run(&ctx, cmd),
                 Command::Design(cmd) => design::run(&ctx, cmd),
                 Command::Files(cmd) => files::run(&ctx, cmd),
                 Command::Snapshot(args) => snapshot::run(&ctx, &args),

@@ -290,6 +290,35 @@ fn choices_all_uses_the_autocomplete_index() {
     );
 }
 
+#[test]
+fn the_autocomplete_index_is_fetched_compressed() {
+    use std::io::Write;
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(AUTOCOMPLETE.as_bytes()).unwrap();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .match_header("accept-encoding", Matcher::Regex("gzip".into()))
+        .with_header("content-encoding", "gzip")
+        .with_body(gz.finish().unwrap())
+        .expect(1)
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "--all", "-q"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    index.assert();
+    let doc = String::from_utf8_lossy(&out);
+    assert!(
+        doc.contains("Miami Beach") && doc.contains("Mclean"),
+        "{doc}"
+    );
+}
+
 const AUTOCOMPLETE: &str = r#"[{"field":"city","value":"Mclean"},{"field":"city","value":"Riverside"},{"field":"city","value":"Miami Beach"},{"field":"subdivision","value":"Cedar Point"}]"#;
 
 fn mock_form_and_index(server: &mut ServerGuard) -> (mockito::Mock, mockito::Mock) {

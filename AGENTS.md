@@ -6,16 +6,16 @@ on a Real Geeks website; the second is for agents changing this repository.
 ## Using geekcli on a Real Geeks site
 
 `geekcli` is the Real Geeks command line. Today it manages a site's website
-content: blog posts and categories, content, area, agent and market report
-pages, the home page, navigation, sidebars, footers, banners, settings,
-design and uploaded files.
+content: blog posts and categories, content, area, agent, market report and
+home valuation pages, the home page, navigation, sidebars, footers, banners, settings,
+search forms, design and uploaded files.
 
 Install:
 
 <!-- x-release-please-start-version -->
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.sh | sh
-# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.3/install.ps1 | iex
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.sh | sh
+# Windows: irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.ps1 | iex
 ```
 <!-- x-release-please-end -->
 
@@ -53,8 +53,8 @@ The rules that keep a live site safe:
    asked: HTML was stripped, or a search value matched nothing. Fix it and
    write again. `--fail-on-warnings` turns them into exit 5.
 6. Note `revisions <ref> --limit 1` before a large rewrite of a page, area
-   page, market report, post, footer, sidebar or navigation bar (and
-   `settings revisions` / `design revisions` before those), so a bad result
+   page, market report, valuation page, post, footer, sidebar or navigation bar (and
+   `settings revisions` / `design revisions` / `search-forms revisions` before those), so a bad result
    is one `revert` away. A deleted or overwritten file comes back with
    `files restore` for 90 days.
 7. Check search criteria with `search check --count --strict` before putting
@@ -95,11 +95,13 @@ src/
     ├── area_pages.rs
     ├── agent_pages.rs # agent landing pages (+ `agents` CRM list); reuses pages helpers
     ├── market_reports.rs # market report pages (search, sold_within, header); reuses pages helpers
+    ├── valuation_pages.rs # home valuation landing pages (search_headline, placeholder, landscape); reuses pages helpers
     ├── home_page.rs   # the home page; alfred's modules (--sections/--section-effect/--area, sections, items)
     ├── nav.rs         # navigation bar links (bars are fixed)
     ├── sidebars.rs    # sidebars and html/links items
     ├── footers.rs     # shared footer HTML blocks
     ├── settings.rs    # typed site settings; coerce() maps NAME=value text to JSON
+    ├── search_forms.rs # the search forms document (advanced tabs, home page search): get/fields/update --data/reset, revisions
     ├── design.rs      # template + colour scheme; preview link rendered via snapshot::render
     ├── banners.rs     # banners; pages attach one with --banner (pages::AttachArgs)
     ├── featured.rs    # Featured Pages tile groups (anna-modern home page)
