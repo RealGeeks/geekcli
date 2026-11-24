@@ -98,13 +98,13 @@ macOS and Linux:
 
 <!-- x-release-please-start-version -->
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.7/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.6/install.ps1 | iex
+irm https://raw.githubusercontent.com/realgeeks/geekcli/v0.12.7/install.ps1 | iex
 ```
 <!-- x-release-please-end -->
 
