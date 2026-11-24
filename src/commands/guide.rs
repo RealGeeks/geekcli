@@ -103,6 +103,8 @@ pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
         ("search-forms", "search forms"),
         ("forms", "search forms"),
         ("tabs", "search forms"),
+        ("modules", "alfred"),
+        ("sections", "alfred"),
     ];
     let needle = aliases
         .iter()

@@ -1695,3 +1695,174 @@ fn an_alias_shared_by_two_sites_exits_2() {
             "a.example.realgeeks.com, b.example.realgeeks.com",
         ));
 }
+
+#[test]
+fn home_page_alfred_flags_build_a_partial_patch_and_report_hidden_modules() {
+    let mut env = Env::new();
+    env.server
+        .mock("GET", "/api/v3/content/home-page/")
+        .with_body(
+            r#"{"id":1,"section_effects":{"about":"fade","listings":"pinned","contact":"fade"}}"#,
+        )
+        .create();
+    let patch = env
+        .server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(json!({
+            "sections": ["about", "listings", "buy-sell-value"],
+            // merged onto the page's effects: listings keeps pinned
+            "section_effects": {"about": "parallax", "listings": "pinned", "contact": "fade"},
+            "extra_content": {"Hero_Eyebrow": "Westside - Estates", "Hero_Poster": null}
+        })))
+        .with_body(
+            r#"{"id":1,"url":"https://x/","sections":["about","listings","buy-sell-value"],
+                "empty_sections":{"buy-sell-value":"No Buy or Sell cards and the home valuation is off.","press":"No press logos yet."},
+                "inactive_settings":{"section_effects.about":"Parallax moves the module's photos, and it has none yet."}}"#,
+        )
+        .create();
+    let out = env
+        .cmd()
+        .args([
+            "home-page",
+            "update",
+            "--sections",
+            "about, listings,buy-sell-value",
+            "--section-effect",
+            "about=parallax",
+            "--area",
+            "Hero_Eyebrow=Westside - Estates",
+            "--area",
+            "Hero_Poster=null",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    patch.assert();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // the switched-on empty module is named; press is off, so it isn't
+    assert!(stderr.contains(
+        "note: the buy-sell-value module is switched on but not on the page: No Buy or Sell cards"
+    ));
+    assert!(!stderr.contains("press"));
+    assert!(stderr.contains("note: section_effects.about does nothing yet: Parallax"));
+    assert_eq!(parse(&out.stdout)["sections"][2], "buy-sell-value");
+
+    env.cmd()
+        .args(["home-page", "update", "--area", "no-equals-sign"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn home_page_sections_switch_all_off_with_none() {
+    let mut env = Env::new();
+    let patch = env
+        .server
+        .mock("PATCH", "/api/v3/content/home-page/")
+        .match_body(Matcher::Json(json!({"sections": []})))
+        .with_body(r#"{"id":1,"sections":[]}"#)
+        .create();
+    env.cmd()
+        .args(["home-page", "update", "--sections", "none"])
+        .assert()
+        .success();
+    patch.assert();
+}
+
+#[test]
+fn home_page_items_set_replaces_one_kind_and_says_when_the_module_still_hides() {
+    let mut env = Env::new();
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/content/home-page/sections/tile/")
+        .match_body(Matcher::Json(json!({"items": [
+            {"text": "Buy", "title": "Find the one.", "link": "/search/"}
+        ]})))
+        .with_body(
+            r#"{"kind":"tile","items":[{"text":"Buy","title":"Find the one.","link":"/search/"}]}"#,
+        )
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/home-page/sections/")
+        .with_body(
+            r#"{"sections":["buy-sell-value","journal"],
+                "empty_sections":{"buy-sell-value":"Needs a link on each card.","journal":"No published blog posts yet."},
+                "results":[]}"#,
+        )
+        .create();
+    let out = env
+        .cmd()
+        .args([
+            "home-page",
+            "items",
+            "set",
+            "tile",
+            "--data",
+            r#"{"items":[{"text":"Buy","title":"Find the one.","link":"/search/"}]}"#,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    put.assert();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // only the module these rows fill is reported
+    assert!(stderr.contains("note: the buy-sell-value module is switched on but not on the page"));
+    assert!(!stderr.contains("journal"));
+    assert_eq!(parse(&out.stdout)["kind"], "tile");
+
+    env.cmd()
+        .args(["home-page", "items", "get", "cards"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "stat, award, press, tile, testimonial, neighborhood",
+        ));
+}
+
+#[test]
+fn featured_areas_set_takes_attribute_value_pairs() {
+    let mut env = Env::new();
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/content/featured-areas/")
+        .match_body(Matcher::Json(json!({"areas": [
+            {"attribute": "city", "value": "Brentwood"},
+            {"attribute": "city", "value": "Pacific Palisades"}
+        ]})))
+        .with_body(r#"{"results":[{"attribute":"city","value":"Brentwood","label":"Brentwood","key":"city||Brentwood","url":"/listings/city/Brentwood/"}],"max_items":30}"#)
+        .create();
+    let out = env
+        .cmd()
+        .args([
+            "featured-areas",
+            "set",
+            "city=Brentwood",
+            "city=Pacific Palisades",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    put.assert();
+    assert_eq!(parse(&out)["results"][0]["key"], "city||Brentwood");
+    env.cmd()
+        .args(["featured-areas", "set", "Brentwood"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn guide_alfred_topic() {
+    let env = Env::new();
+    env.cmd()
+        .args(["guide", "alfred"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("The alfred design")
+                .and(predicate::str::contains("items set tile")),
+        );
+}
