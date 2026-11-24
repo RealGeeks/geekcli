@@ -1664,4 +1664,4 @@ geekcli search-forms reset                        # back to the board's forms
 - Snapshot a search page after a change (`geekcli snapshot
   /search/advanced_search/`).
 
-API reference: [Search forms](https://developers.realgeeks.com/content-api/searches/#search-forms).
+API reference: [Search forms](https://developers.realgeeks.com/content-api/design-settings-files/#search-forms).
