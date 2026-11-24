@@ -8,8 +8,8 @@
 
 The Real Geeks command line. `geekcli` manages a Real Geeks website: blog
 posts and categories, content, area, agent, market report and home valuation
-pages, the home page, navigation, sidebars, footers, banners, settings, design and uploaded
-files. It is
+pages, the home page, navigation, sidebars, footers, banners, settings, search
+forms, design and uploaded files. It is
 built to be driven by scripts and AI agents as much as by people: JSON on
 stdout when piped, JSON errors on stderr, stable exit codes, and a built-in
 guide written for agents.
@@ -36,8 +36,8 @@ A Real Geeks website can be run by the AI tools you already use:
 
 - **The whole site is an open, documented API.** Blog posts, pages,
   neighborhood (area) pages, market report and home valuation pages, the home
-  page, navigation,
-  sidebars, footers, banners, settings, design and files, all described in the
+  page, navigation, sidebars, footers, banners, settings, search forms, design
+  and files, all described in the
   [Content API documentation](https://developers.realgeeks.com/content-api/).
 - **Two ways in.** Connect Claude or ChatGPT to the site and ask in plain
   English, or let a coding agent such as Claude Code or Codex drive geekcli.

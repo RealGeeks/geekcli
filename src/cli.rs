@@ -6,8 +6,8 @@ use clap_complete::Shell;
 use crate::client::Client;
 use crate::commands::{
     agent_pages, api, area_pages, auth, banners, blog_home, categories, design, featured, files,
-    footers, guide, home_page, inspect, market_reports, nav, pages, posts, search, settings,
-    sidebars, snapshot, templates, update, valuation_pages, Context,
+    footers, guide, home_page, inspect, market_reports, nav, pages, posts, search, search_forms,
+    settings, sidebars, snapshot, templates, update, valuation_pages, Context,
 };
 use crate::config::{self, Config, Overrides};
 use crate::error::{Error, Result};
@@ -154,6 +154,9 @@ pub enum Command {
     Featured(featured::FeaturedCommand),
     /// Site settings
     Settings(settings::SettingsCommand),
+    /// The site's search forms: advanced search tabs and the home page search
+    #[command(name = "search-forms")]
+    SearchForms(search_forms::SearchFormsCommand),
     /// Template and colour scheme, with unsaved previews
     Design(design::DesignCommand),
     /// Uploaded files (images, PDFs) on the site's media bucket
@@ -243,6 +246,7 @@ fn dispatch(cli: Cli, printer: Printer) -> Result<()> {
                 Command::Banners(cmd) => banners::run(&ctx, cmd),
                 Command::Featured(cmd) => featured::run(&ctx, cmd),
                 Command::Settings(cmd) => settings::run(&ctx, cmd),
+                Command::SearchForms(cmd) => search_forms::run(&ctx, cmd),
                 Command::Design(cmd) => design::run(&ctx, cmd),
                 Command::Files(cmd) => files::run(&ctx, cmd),
                 Command::Snapshot(args) => snapshot::run(&ctx, &args),

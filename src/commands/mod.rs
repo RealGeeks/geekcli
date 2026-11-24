@@ -22,6 +22,7 @@ pub mod posts;
 pub mod provenance;
 pub mod revisions;
 pub mod search;
+pub mod search_forms;
 pub mod settings;
 pub mod sidebars;
 pub mod snapshot;

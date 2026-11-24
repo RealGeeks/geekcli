@@ -398,6 +398,7 @@ subcommands: `revisions` (list), `revision` (preview) and `revert` (undo).
 | banners | `banners` | every field |
 | site settings | `settings` | the settings that save changed |
 | design | `design` | `template` and `styles` (the colour scheme and its variables) |
+| search forms | `search-forms` | the whole set of search forms (§31) |
 
 For content this is the same history as the admin's Versions page, so
 changes made in the admin appear here and can be reverted here, and the
@@ -1614,3 +1615,53 @@ geekcli valuation-pages delete /riverside-home-value/
   --mobile`): a long headline pushes the address box down on a phone.
 
 API reference: [Home valuation pages](https://developers.realgeeks.com/content-api/site-pages/#home-valuation-pages).
+
+## 31. Search forms
+
+The site's search forms are the advanced search tabs (Advanced Search,
+Condo Search, Sold Search…, as `pages`) and the home page search
+(`home_page_forms`): which fields each shows, in what order, with what
+labels. The site owner edits the same thing at Search Forms in the site
+backend. The whole document is read, edited and sent back.
+
+```bash
+geekcli search-forms get > forms.json             # pages, fields, rules
+geekcli search-forms fields -s school             # what the MLS offers
+geekcli search-forms update --data @forms.json --dry-run
+geekcli search-forms update --data @forms.json
+geekcli search-forms revisions --limit 1
+geekcli search-forms reset                        # back to the board's forms
+```
+
+- `pages` is the full list of tabs in order: leave a page out to remove
+  it, leave out `id` to create one. `home_page_forms` can be changed but
+  not added to or removed. Omit either key to keep it.
+- Each page has `primary` (location, or the search box) and `secondary`
+  (property details). An item is `{"field": "city", "label": "Town",
+  "widget": "multiselect"}`; a min/max field is one item,
+  `{"field": "beds", "range": "min", "label_min": "Bedrooms"}`.
+- Each page's `rules` say what its layout shows, and anything else is
+  refused (exit 5): advanced pages take only drop-downs and lists
+  (`select`, `multiselect`) in `primary`; home page forms show only
+  price, beds, baths and property types in `secondary`; the theme writes
+  some labels itself (Price, Sold Within).
+- `"fixed": true` items are built-in filters (Condo Search's type = condo,
+  Sold Search's "Sold only"). They can't be removed; remove the page.
+- MLS Number Search and Address Search are ready-made
+  (`"prepackaged": true`): nothing on them changes. Add one back with just
+  `{"id": "mls_search"}`; `prepackaged_pages` lists what the site can add,
+  including the board's filter pages.
+- A field whose choices come from the MLS is refused when it would load
+  more than 3,000 of them (street names, for example); `fields` shows each
+  one's `choices`. Always `--dry-run` first: it runs this check too.
+- Warnings, not errors: `long_form` (more than 14 drop-downs on a page:
+  suggest trimming) and `area_directory_changes` (Advanced Search starts
+  with a different field, which reorganizes the area pages' Browse All
+  directory).
+- The first save copies the board's forms onto the site, after which
+  board changes no longer reach it. `reset` undoes that; `revert` undoes
+  one change and everything after it.
+- Snapshot a search page after a change (`geekcli snapshot
+  /search/advanced_search/`).
+
+API reference: [Search forms](https://developers.realgeeks.com/content-api/design-settings-files/#search-forms).
