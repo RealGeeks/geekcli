@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/RealGeeks/geekcli/compare/v0.12.7...v0.13.0) (2026-11-24)
+
+
+### Features
+
+* alfred home page modules and featured areas ([#93](https://github.com/RealGeeks/geekcli/issues/93)) ([73c683c](https://github.com/RealGeeks/geekcli/commit/73c683c579f0498c7d0ec0ffcc907bb62700ff60))
+
 ## [0.12.7](https://github.com/RealGeeks/geekcli/compare/v0.12.6...v0.12.7) (2026-11-24)
 
 
