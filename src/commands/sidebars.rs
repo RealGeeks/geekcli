@@ -457,43 +457,53 @@ fn strip_html(text: &str) -> String {
     out
 }
 
+fn sidebar_heading(sidebar: &Value) -> String {
+    let used = sidebar
+        .get("used_by")
+        .and_then(Value::as_array)
+        .and_then(|pages| {
+            // `used_by` holds at most 500 slugs; `used_by_count` is the real total
+            let total = sidebar
+                .get("used_by_count")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(pages.len());
+            if total == 0 {
+                return None;
+            }
+            let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
+            if shown.is_empty() {
+                return Some(format!("{total} page(s)"));
+            }
+            let more = total.saturating_sub(shown.len());
+            let tail = if more > 0 {
+                format!(", +{more} more")
+            } else {
+                String::new()
+            };
+            Some(format!("{total} page(s): {}{tail}", shown.join(", ")))
+        })
+        .unwrap_or_default();
+    format!(
+        "{} (id {}){}{}",
+        cell(&sidebar["name"]),
+        sidebar["id"],
+        if sidebar["special"].as_bool().unwrap_or(false) {
+            ", built-in"
+        } else {
+            ""
+        },
+        if used.is_empty() {
+            String::new()
+        } else {
+            format!(", used by: {used}")
+        }
+    )
+}
+
 fn print_sidebar(ctx: &Context, sidebar: &Value) -> Result<()> {
     if ctx.printer.format == Format::Table {
-        let used = sidebar
-            .get("used_by")
-            .and_then(Value::as_array)
-            .map(|pages| {
-                // `used_by` holds at most 500 slugs; `used_by_count` is the real total
-                let total = sidebar
-                    .get("used_by_count")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| usize::try_from(n).ok())
-                    .unwrap_or(pages.len());
-                let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
-                let more = total.saturating_sub(shown.len());
-                let tail = if more > 0 {
-                    format!(", +{more} more")
-                } else {
-                    String::new()
-                };
-                format!("{total} page(s): {}{tail}", shown.join(", "))
-            })
-            .unwrap_or_default();
-        ctx.printer.note(&format!(
-            "{} (id {}){}{}",
-            cell(&sidebar["name"]),
-            sidebar["id"],
-            if sidebar["special"].as_bool().unwrap_or(false) {
-                ", built-in"
-            } else {
-                ""
-            },
-            if used.is_empty() {
-                String::new()
-            } else {
-                format!(", used by: {used}")
-            }
-        ));
+        ctx.printer.note(&sidebar_heading(sidebar));
         let rows: Vec<Value> = items_of(sidebar)
             .iter()
             .map(|i| {
@@ -637,5 +647,44 @@ mod tests {
         assert!(matches!(read_items_json("123"), Err(Error::Usage(_))));
         assert!(matches!(read_items_json("{bad"), Err(Error::Usage(_))));
         Ok(())
+    }
+
+    #[test]
+    fn formats_sidebar_heading_without_empty_used_by() {
+        assert_eq!(
+            sidebar_heading(&json!({"id": 5, "name": "Custom", "special": false, "used_by": []})),
+            "Custom (id 5)"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({"id": 5, "name": "Custom"})),
+            "Custom (id 5)"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 1,
+                "name": "Area",
+                "special": true,
+                "used_by": ["/a/", "/b/"]
+            })),
+            "Area (id 1), built-in, used by: 2 page(s): /a/, /b/"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 2,
+                "name": "Shared",
+                "used_by": ["a", "b", "c", "d", "e", "f"],
+                "used_by_count": 8
+            })),
+            "Shared (id 2), used by: 8 page(s): a, b, c, d, e, +3 more"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 3,
+                "name": "CountOnly",
+                "used_by": [],
+                "used_by_count": 4
+            })),
+            "CountOnly (id 3), used by: 4 page(s)"
+        );
     }
 }
