@@ -401,23 +401,30 @@ mod tests {
     fn login_with_open_browser_handles_success_and_opener_failure() -> Result<()> {
         for opener_fails in [false, true] {
             let mut server = mockito::Server::new();
+            // Echo the port the CLI bound (port 0, so the OS picked it) in the
+            // approval URL; the opener reads it from there, so no port is guessed.
+            let approve = format!("{}/approve/", server.url());
             server
                 .mock("POST", "/api/v3/auth/cli/start/")
                 .with_status(201)
-                .with_body(format!(
-                    r#"{{"request_id":"req-open","authorize_url":"{}/approve/","expires_in":5}}"#,
-                    server.url()
-                ))
+                .with_body_from_request(move |request| {
+                    let port = request
+                        .body()
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<Value>(b).ok())
+                        .and_then(|b| b["port"].as_u64())
+                        .unwrap_or_default();
+                    format!(
+                        r#"{{"request_id":"req-open","authorize_url":"{approve}?port={port}","expires_in":5}}"#
+                    )
+                    .into()
+                })
                 .create();
             server
                 .mock("POST", "/api/v3/auth/cli/token/")
                 .with_status(201)
                 .with_body(r#"{"api_key":"rg_live_opened"}"#)
                 .create();
-
-            let probe = TcpListener::bind("127.0.0.1:0")?;
-            let port = probe.local_addr()?.port();
-            drop(probe);
 
             let target = crate::config::Target {
                 domain: "www.test.local".into(),
@@ -428,13 +435,17 @@ mod tests {
             let req = LoginRequest {
                 name: "Test".into(),
                 scopes: vec!["blog:write".into()],
-                port: Some(port),
+                port: None,
                 state: Some("st-open".into()),
             };
             let opened = std::cell::Cell::new(false);
             let mut cb_handle = None;
-            let res = login_with(&anon, &req, true, |_url| {
+            let res = login_with(&anon, &req, true, |url| {
                 opened.set(true);
+                let port: u16 = url
+                    .rsplit_once("port=")
+                    .and_then(|(_, p)| p.parse().ok())
+                    .unwrap_or_default();
                 cb_handle = Some(std::thread::spawn(move || {
                     if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
                         let _ = write!(

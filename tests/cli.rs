@@ -494,10 +494,13 @@ fn rate_limit_is_retried_for_seconds_and_http_dates() {
 fn low_rate_limit_remaining_warns_once_across_requests() {
     let mut env = Env::new();
     let base = env.server.url();
-    // page 1 has plenty of room (60/600): no warning
-    env.server
+    // page 1 has plenty of room (60/600): no warning. Matched on the exact
+    // query, so it cannot also answer the page 2 and 3 requests.
+    let page1 = env
+        .server
         .mock("GET", "/api/v3/blog/categories/")
-        .match_query(Matcher::UrlEncoded("page_size".into(), "100".into()))
+        .match_query(Matcher::Exact("page_size=100".into()))
+        .expect(1)
         .with_header("x-ratelimit-limit", "600")
         .with_header("x-ratelimit-remaining", "60")
         .with_body(format!(
@@ -541,6 +544,7 @@ fn low_rate_limit_remaining_warns_once_across_requests() {
         .get_output()
         .clone();
     assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n2\n3\n");
+    page1.assert();
 }
 
 #[test]
@@ -894,13 +898,51 @@ fn guide_topics_and_sections() {
         .stdout
         .clone();
     let multi = String::from_utf8_lossy(&out);
-    assert!(multi.matches("\n## ").count() >= 1, "{multi}");
+    // several sections, each later heading preceded by a blank line
+    assert!(multi.starts_with("## "), "{multi}");
+    let later = multi.matches("\n## ").count();
+    assert!(later >= 1, "{multi}");
+    assert_eq!(multi.matches("\n\n## ").count(), later, "{multi}");
 
     env.cmd()
         .args(["guide", "zzz"])
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no guide section matches"));
+}
+
+/// Safety notes agents rely on live in `--help` and the guide (AGENTS.md:
+/// "write a lesson down everywhere an agent would meet it"); keep them there.
+#[test]
+fn help_and_guide_keep_their_safety_notes() {
+    let env = Env::new();
+    for sub in ["create", "update"] {
+        env.cmd()
+            .args(["area-pages", sub, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--area-name is display text only"))
+            .stdout(predicate::str::contains("subdivision"))
+            .stdout(predicate::str::contains("search check"));
+    }
+    env.cmd()
+        .args(["area-pages", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("public as soon as it is created"))
+        .stdout(predicate::str::contains("--no-search"));
+    env.cmd()
+        .args(["pages", "update", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("page-heading"))
+        .stdout(predicate::str::contains("BIG_SEARCH_TITLE"));
+    env.cmd()
+        .args(["guide", "fonts"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("HEADING_FONT"))
+        .stdout(predicate::str::contains("BODY_FONT"));
 }
 
 /// `posts create --help` and `guide html` agree on what the sanitizer keeps.

@@ -236,13 +236,20 @@ fn login_refuses_to_follow_a_redirect_to_another_host() {
 #[test]
 fn browser_login_print_url_mode_and_callback_edge_cases() {
     let mut server = Server::new();
+    // The CLI binds port 0 and registers the port the OS gave it; the start
+    // mock hands that port to the callback thread, so no port is guessed.
+    let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
+    let approve = format!("{}/approve/", server.url());
     server
         .mock("POST", "/api/v3/auth/cli/start/")
         .with_status(201)
-        .with_body(format!(
-            r#"{{"request_id":"req-print","authorize_url":"{}/approve/","expires_in":5}}"#,
-            server.url()
-        ))
+        .with_body_from_request(move |request| {
+            let body: serde_json::Value = serde_json::from_slice(request.body().unwrap()).unwrap();
+            let port = u16::try_from(body["port"].as_u64().unwrap()).unwrap();
+            port_tx.send(port).unwrap();
+            format!(r#"{{"request_id":"req-print","authorize_url":"{approve}","expires_in":5}}"#)
+                .into()
+        })
         .create();
     let token = server
         .mock("POST", "/api/v3/auth/cli/token/")
@@ -251,23 +258,11 @@ fn browser_login_print_url_mode_and_callback_edge_cases() {
         .with_body(r#"{"api_key":"rg_live_from_login"}"#)
         .create();
 
-    // Pick a free port up front so the callback thread knows where to connect
-    // when calling browser::login(..., open_browser = false).
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = probe.local_addr().unwrap().port();
-    drop(probe);
-
-    let mut req = request("state-print");
-    req.port = Some(port);
+    let req = request("state-print");
 
     let browser = thread::spawn(move || {
-        // Wait for browser::start to bind the loopback listener before sending requests
-        for _ in 0..40 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
+        // the listener is bound before the start request is sent
+        let port = port_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         // non-callback path gets 404 and does not end login
         let fav = reqwest::blocking::get(format!("http://127.0.0.1:{port}/favicon.ico")).unwrap();
         assert_eq!(fav.status().as_u16(), 404);
