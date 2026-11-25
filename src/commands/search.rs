@@ -902,7 +902,13 @@ pub const AUTOCOMPLETE_PATH: &str = "api/v2/search/autocomplete-options/";
 /// all cities, unlike the advanced form's choice list that follows the
 /// default county.
 fn autocomplete_index(ctx: &Context) -> Result<Value> {
-    Ok(ctx.client.site_get(AUTOCOMPLETE_PATH, &Query::new())?.body)
+    let body = ctx.client.site_get(AUTOCOMPLETE_PATH, &Query::new())?.body;
+    if !body.is_array() {
+        return Err(Error::Other(
+            "the autocomplete index response was not a JSON array".into(),
+        ));
+    }
+    Ok(body)
 }
 
 /// Sorted, de-duplicated values for one field from the autocomplete index.
@@ -1007,20 +1013,44 @@ fn closest(value: &str, candidates: &[String], limit: usize) -> Vec<String> {
 
 // ------------------------------------------------------------------- check
 
-/// A choice list made only of numbers (prices, beds, square feet) is a set
-/// of presets, not the only values the search takes.
+/// A choice list made only of finite numbers (prices, beds, square feet) is a
+/// set of presets, not the only values the search takes.
 fn is_numeric_list(values: &[String]) -> bool {
     let mut any = false;
     for v in values {
         if v.is_empty() || v.eq_ignore_ascii_case("all") {
             continue;
         }
-        if v.replace(',', "").parse::<f64>().is_err() {
+        if !v.replace(',', "").parse::<f64>().is_ok_and(f64::is_finite) {
             return false;
         }
         any = true;
     }
     any
+}
+
+/// Whether `field` is a postal/ZIP code field whose numeric values are discrete
+/// codes rather than numeric range presets.
+fn is_zip_field(field: &str) -> bool {
+    matches!(field, "zip" | "zipcode" | "zip_code" | "postal_code")
+}
+
+/// Whether a field is a numeric range/preset field (e.g. `min_max_field`,
+/// `list_price_min`, `beds_min`) rather than a discrete code list like `zip`.
+fn is_numeric_preset(field: &str, rows: &[&Value], static_candidates: &[String]) -> bool {
+    let is_min_max = rows.iter().any(|r| {
+        r.get("widget").and_then(Value::as_str) == Some("min_max_field")
+            || r.get("flags")
+                .and_then(Value::as_array)
+                .is_some_and(|f| f.iter().any(|v| v.as_str() == Some("min_max_field")))
+    });
+    if is_min_max || field.ends_with("_min") || field.ends_with("_max") {
+        return true;
+    }
+    if is_zip_field(field) {
+        return false;
+    }
+    is_numeric_list(static_candidates)
 }
 
 /// Result of comparing criteria values with the site's choices.
@@ -1067,6 +1097,7 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
         }
     };
     let mut index: Option<Value> = None;
+    let mut autocomplete_failed = false;
     for (field, values) in by_field {
         let rows = field_rows(&fields.rows, &field);
         // the site takes true/1/yes for yes-no fields, not just the listed values
@@ -1080,25 +1111,34 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
             .iter()
             .map(|c| cell(&c["value"]))
             .collect();
-        // the form submits `all` for "no preference" on any listed field
-        let values: Vec<String> = if candidates.is_empty() {
-            values
-        } else {
-            values.into_iter().filter(|v| v != "all").collect()
-        };
-        if is_numeric_list(&candidates) {
+        if is_numeric_preset(&field, &rows, &candidates) {
             continue;
         }
-        let settled = !candidates.is_empty() && values.iter().all(|v| candidates.contains(v));
+        // the form submits `all` for "no preference" on any listed field
+        let values: Vec<String> = values.into_iter().filter(|v| v != "all").collect();
+        if values.is_empty() {
+            // nothing to compare, so the field was not checked
+            continue;
+        }
+        let static_catalog_complete = fields.source == FieldSource::Catalog
+            && !candidates.is_empty()
+            && rows
+                .iter()
+                .all(|r| r.get("dynamic").and_then(Value::as_bool) != Some(true));
+        let settled = static_catalog_complete
+            || (!candidates.is_empty() && values.iter().all(|v| candidates.contains(v)));
         if !settled {
-            if index.is_none() {
+            if index.is_none() && !autocomplete_failed {
                 match autocomplete_index(ctx) {
                     Ok(body) => index = Some(body),
                     Err(e) => {
                         result.error = Some(format!("could not read the autocomplete index: {e}"));
-                        index = Some(Value::Null);
+                        autocomplete_failed = true;
                     }
                 }
+            }
+            if autocomplete_failed {
+                continue;
             }
             if let Some(body) = &index {
                 candidates.extend(autocomplete_values(body, &field));
@@ -1106,7 +1146,7 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
         }
         candidates.sort();
         candidates.dedup();
-        if candidates.is_empty() || is_numeric_list(&candidates) {
+        if candidates.is_empty() || (!is_zip_field(&field) && is_numeric_list(&candidates)) {
             continue;
         }
         for value in &values {
@@ -1580,7 +1620,12 @@ mod tests {
         assert!(is_numeric_list(&list(&["all", "100000", "1,000,000"])));
         assert!(!is_numeric_list(&list(&["all"])));
         assert!(!is_numeric_list(&list(&["Miami", "33458"])));
+        assert!(!is_numeric_list(&list(&["NaN"])));
+        assert!(!is_numeric_list(&list(&["inf"])));
+        assert!(!is_numeric_list(&list(&["-infinity"])));
+        assert!(!is_numeric_list(&list(&["100", "NaN"])));
     }
+
     #[test]
     fn parse_criteria_preserves_ampersand_in_values() {
         let q = parse_criteria(&["subdivision=Town & Country".into()]).unwrap_or_default();
