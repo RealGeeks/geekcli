@@ -240,5 +240,25 @@ mod tests {
         assert_eq!(refused(Path::new("./work/post.md"), &home), None);
         let why = refused(Path::new("./.env"), &home);
         assert!(why.as_deref().is_some_and(|w| w.contains("hidden file")));
+
+        // check() reports the override hint on refused files
+        let err = check(Path::new("./.env"));
+        assert!(matches!(
+            err,
+            Err(Error::Usage(m)) if m.contains(FLAG) && m.contains(ENV)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_the_config_file_is_refused() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let cfg = dir.path().join("config.toml");
+        std::fs::write(&cfg, "default_site = \"a.com\"\n")?;
+        let link = dir.path().join("harmless.txt");
+        std::os::unix::fs::symlink(&cfg, &link)?;
+        let why = refusal(&link, None, Some(&cfg));
+        assert!(why.as_deref().is_some_and(|w| w.contains("API keys")));
+        Ok(())
     }
 }

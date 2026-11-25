@@ -31,7 +31,7 @@ pub mod templates;
 pub mod update;
 pub mod valuation_pages;
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 
 use serde_json::{Map, Value};
 
@@ -248,10 +248,18 @@ pub fn confirm(ctx: &Context, what: &str) -> Result<bool> {
     if ctx.yes || !io::stdin().is_terminal() {
         return Ok(true);
     }
-    eprint!("Delete {what}? [y/N] ");
-    io::stderr().flush()?;
+    confirm_prompt(what, &mut io::stdin().lock(), &mut io::stderr().lock())
+}
+
+fn confirm_prompt(
+    what: &str,
+    input: &mut impl io::BufRead,
+    err: &mut impl io::Write,
+) -> Result<bool> {
+    write!(err, "Delete {what}? [y/N] ")?;
+    err.flush()?;
     let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
+    input.read_line(&mut answer)?;
     Ok(matches!(
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
@@ -336,6 +344,40 @@ mod tests {
 
         assert_eq!(id_of(&json!({"id": 42})).ok(), Some(42));
         assert!(matches!(id_of(&json!({})), Err(Error::Other(_))));
+
+        let paging = Paging {
+            page: Some(2),
+            page_size: Some(50),
+            all: false,
+            ordering: Some("-id".into()),
+        };
+        let mut paged = Query::new();
+        paging.apply(&mut paged);
+        assert_eq!(
+            paged,
+            vec![
+                ("page".into(), "2".into()),
+                ("page_size".into(), "50".into()),
+                ("ordering".into(), "-id".into()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn confirm_prompt_parses_yes_no_and_eof() -> Result<()> {
+        for (input, expected) in [
+            ("y\n", true),
+            ("YES\n", true),
+            ("n\n", false),
+            ("\n", false),
+            ("", false),
+        ] {
+            let mut reader = std::io::Cursor::new(input.as_bytes());
+            let mut err = Vec::new();
+            assert_eq!(confirm_prompt("item 1", &mut reader, &mut err)?, expected);
+            assert_eq!(String::from_utf8_lossy(&err), "Delete item 1? [y/N] ");
+        }
         Ok(())
     }
 }

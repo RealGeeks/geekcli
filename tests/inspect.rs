@@ -152,6 +152,14 @@ fn inspect_returns_rendered_dom_values() {
         .stderr(predicate::str::contains("no element matches selector"));
 
     command(&server, &dir)
+        .args(["inspect", "/", "--js", "undefined", "--wait", "10"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "JavaScript did not return a JSON value",
+        ));
+
+    command(&server, &dir)
         .args([
             "inspect",
             "/",

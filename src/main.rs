@@ -44,17 +44,38 @@ fn install_panic_hook(format: Format) {
             std::process::exit(0);
         }
         let message = format!("geekcli hit an internal error{location}: {detail}");
-        if format == Format::Table {
-            eprintln!("error: {message}\n  please report it: {ISSUES}");
-        } else {
-            let envelope = serde_json::json!({ "error": {
-                "code": "internal_error",
-                "message": message,
-                "hint": format!("please report it: {ISSUES}"),
-                "exit_code": 1,
-            }});
-            eprintln!("{envelope}");
-        }
+        eprintln!("{}", format_panic(format, &message));
         std::process::exit(1);
     }));
+}
+
+fn format_panic(format: Format, message: &str) -> String {
+    if format == Format::Table {
+        format!("error: {message}\n  please report it: {ISSUES}")
+    } else {
+        serde_json::json!({ "error": {
+            "code": "internal_error",
+            "message": message,
+            "hint": format!("please report it: {ISSUES}"),
+            "exit_code": 1,
+        }})
+        .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_panic_honours_table_and_json_error_contracts() {
+        let table = format_panic(Format::Table, "boom");
+        assert!(table.contains("error: boom") && table.contains(ISSUES));
+
+        let json_out = format_panic(Format::Json, "boom");
+        let parsed: serde_json::Value = serde_json::from_str(&json_out).unwrap_or_default();
+        assert_eq!(parsed["error"]["code"], "internal_error");
+        assert_eq!(parsed["error"]["message"], "boom");
+        assert_eq!(parsed["error"]["exit_code"], 1);
+    }
 }

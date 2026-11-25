@@ -390,3 +390,34 @@ fn add(ctx: &Context, args: &AddArgs) -> Result<()> {
     let updated = ctx.client.post(&links_path(&bar)?, &link)?.body;
     print_bar(ctx, &updated)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn label_falls_back_and_read_links_json_accepts_array_object_and_file() -> Result<()> {
+        assert_eq!(label(&json!({})), "the bar");
+        assert_eq!(label(&json!({"label": "Top"})), "Top");
+
+        let arr = read_links_json(r#"[{"type":"contact"}]"#)?;
+        assert_eq!(arr.len(), 1);
+        let obj = read_links_json(r#"{"links":[{"type":"contact"}]}"#)?;
+        assert_eq!(obj.len(), 1);
+
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("links.json");
+        std::fs::write(
+            &file,
+            r#"[{"type":"custom","url":"/","anchor_text":"Home"}]"#,
+        )?;
+        let from_file = read_links_json(&format!("@{}", file.display()))?;
+        assert_eq!(from_file[0]["anchor_text"], "Home");
+
+        assert!(matches!(
+            read_links_json(r#"{"other":1}"#),
+            Err(Error::Usage(_))
+        ));
+        Ok(())
+    }
+}

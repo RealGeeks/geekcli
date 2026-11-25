@@ -1444,9 +1444,38 @@ mod tests {
             json!({"value": "res", "label": "Residential"})
         );
         assert_eq!(
+            choice_row(&json!({"value": "condo"})),
+            json!({"value": "condo", "label": "condo"})
+        );
+        assert_eq!(
             choice_row(&json!("Miami")),
             json!({"value": "Miami", "label": "Miami"})
         );
+
+        let mut criteria = Map::new();
+        criteria.insert("city".into(), json!(["Miami", "Tampa"]));
+        criteria.insert("beds_min".into(), json!(3));
+        assert_eq!(
+            canonical_query(&criteria),
+            vec![
+                ("beds_min".into(), "3".into()),
+                ("city".into(), "Miami".into()),
+                ("city".into(), "Tampa".into()),
+            ]
+        );
+
+        let wrapped = catalog_rows(&json!({
+            "fields": [{"id": "city", "label": "City", "widget": "select"}]
+        }));
+        assert_eq!(wrapped.as_ref().map(Vec::len), Some(1));
+        assert!(catalog_rows(&json!({"unexpected": true})).is_none());
+
+        // unknown value with no candidates omits the "did you mean" hint
+        let warning = value_warning("city", "zzzzzzzzzz", &[]);
+        assert!(warning
+            .as_ref()
+            .and_then(|w| w["message"].as_str())
+            .is_some_and(|m| m.contains("not one of") && !m.contains("did you mean")));
         Ok(())
     }
 

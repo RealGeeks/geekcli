@@ -777,4 +777,15 @@ mod tests {
             assert_eq!(guess_content_type(name), mime, "{name}");
         }
     }
+
+    #[test]
+    fn check_uploads_rejects_paths_without_file_name() {
+        let paths = ["/".to_string()];
+        let err = check_uploads(&paths, None, true);
+        assert!(matches!(
+            err,
+            Err(Error::Usage(m)) if m.contains("cannot determine a file name")
+        ));
+        assert_eq!(url_file_name("mailto:user@example.com"), None);
+    }
 }

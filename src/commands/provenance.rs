@@ -339,6 +339,11 @@ mod ring_backend {
                 RING.verify_raw(SigningScheme::EcdsaP256Sha256, b"not-a-key", b"msg", b"sig"),
                 Err(Error::Verification(_))
             ));
+            assert!(algorithm(SigningScheme::MlDsa65).is_none());
+            assert!(matches!(
+                RING.verify_raw(SigningScheme::MlDsa65, b"key", b"msg", b"sig"),
+                Err(Error::UnsupportedAlgorithm(_))
+            ));
             assert!(matches!(
                 RING.verify_prehashed(SigningScheme::EcdsaP256Sha256, b"key", b"digest", b"sig"),
                 Err(Error::UnsupportedAlgorithm(_))
@@ -438,6 +443,7 @@ mod tests {
             sha256_file(&path)?,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+        assert!(sha256_file(&dir.path().join("missing")).is_err());
         Ok(())
     }
 
@@ -447,6 +453,15 @@ mod tests {
         assert!(bad_hex.as_ref().is_err_and(|e| e.contains("bad sha256")));
 
         let engine = base64::engine::general_purpose::STANDARD;
+        for malformed in [
+            serde_json::json!({}),
+            serde_json::json!({"dsseEnvelope": {"payload": 123}}),
+            serde_json::json!({"dsseEnvelope": {"payload": "!!!not-base64"}}),
+            serde_json::json!({"dsseEnvelope": {"payload": engine.encode("not-json")}}),
+            serde_json::json!({"dsseEnvelope": {"payload": engine.encode("{}")}}),
+        ] {
+            assert_eq!(predicate_type(&malformed), None, "{malformed}");
+        }
         let wrong_pred = serde_json::json!({
             "attestations": [{
                 "bundle": {

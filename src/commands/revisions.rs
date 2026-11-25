@@ -327,6 +327,22 @@ mod tests {
             Vec::<Value>::new()
         );
 
+        // alternate API key spellings (`current` / `previous`) in both map and list previews
+        let alt_map = preview_rows(&json!({
+            "preview": { "title": { "current": "Now", "previous": "Before" } }
+        }));
+        assert_eq!(alt_map[0]["now"], "Now");
+        assert_eq!(alt_map[0]["restored"], "Before");
+        let alt_list = preview_rows(&json!({
+            "preview": [
+                { "field": "title", "current": "Now", "previous": "Before" },
+                { "field": "slug", "now": "s2", "after_revert": "s1" }
+            ]
+        }));
+        assert_eq!(alt_list[0]["now"], "Now");
+        assert_eq!(alt_list[0]["restored"], "Before");
+        assert_eq!(alt_list[1]["restored"], "s1");
+
         // long string (> 90 chars), long html entry (> 30 chars), fallback unknown object
         let long_str = "a".repeat(120);
         let summarised = summarise(Some(&json!(long_str)));

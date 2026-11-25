@@ -860,6 +860,24 @@ mod tests {
             check_transport("not a url"),
             Err(Error::Config(_))
         ));
+
+        // Stored plain-http remote base_url is rejected by resolve_target
+        let mut bad_cfg = Config::default();
+        bad_cfg.put_site(
+            "www.remote.example",
+            SiteConfig {
+                api_key: "rg_live_k".into(),
+                base_url: Some("http://www.remote.example".into()),
+                key_name: None,
+                scopes: vec![],
+                expires_at: None,
+                aliases: vec![],
+            },
+        );
+        assert!(matches!(
+            resolve_target(&bad_cfg, &Overrides::default()),
+            Err(Error::Config(_))
+        ));
         Ok(())
     }
 
@@ -886,6 +904,15 @@ mod tests {
             Config::default().save_to(&blocker.join("config.toml")),
             Err(Error::Config(m)) if m.contains("cannot create")
         ));
+
+        // Saving directly over an existing directory fails rename and cleans up its temp file
+        let target_dir = dir.path().join("existing-dir");
+        fs::create_dir(&target_dir)?;
+        assert!(matches!(
+            Config::default().save_to(&target_dir),
+            Err(Error::Config(m)) if m.contains("cannot write")
+        ));
+        tighten(Path::new("nonexistent-geekcli-config.toml"));
         Ok(())
     }
 

@@ -233,6 +233,26 @@ fn repo_validation_table_notes_same_tag_and_github_error_codes() {
     assert_eq!(missing.status.code(), Some(4));
     assert_eq!(parse_error(&missing.stderr)["error"]["code"], "not_found");
 
+    // --tag hitting a 500 server error maps to failure() (exit 1)
+    let mut env = Env::new();
+    env.server
+        .mock("GET", format!("{RELEASES}/tags/v0.0.2").as_str())
+        .with_status(500)
+        .with_body(r#"{"message":"Internal Server Error"}"#)
+        .create();
+    let server_err = env
+        .cmd()
+        .args(["update", "--tag", "0.0.2"])
+        .output()
+        .unwrap();
+    assert_eq!(server_err.status.code(), Some(1));
+
+    // Malformed semver tag from GitHub maps cleanly to exit 1
+    let mut env = Env::new();
+    env.release("latest", "not-a-semver", &json!([]));
+    let bad_ver = env.cmd().args(["update", "--check"]).output().unwrap();
+    assert_eq!(bad_ver.status.code(), Some(1));
+
     // Closed loopback port maps Transport error to exit 8 (network)
     let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let dead_port = dead.local_addr().unwrap().port();

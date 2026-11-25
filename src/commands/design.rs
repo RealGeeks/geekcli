@@ -352,6 +352,10 @@ mod tests {
         let client = crate::client::Client::new(&target, 0, false)?;
         assert_eq!(rehome(&client, "not a url"), "not a url");
         assert_eq!(
+            rehome(&client, "https://other.example/preview/"),
+            "https://www.example.com/preview/"
+        );
+        assert_eq!(
             rehome(&client, "https://other.example/preview/?a=1"),
             "https://www.example.com/preview/?a=1"
         );

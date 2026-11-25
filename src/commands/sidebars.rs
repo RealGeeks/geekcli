@@ -573,7 +573,11 @@ mod tests {
 
     #[test]
     fn parses_links() -> Result<()> {
-        let links = parse_links(&["Riverside=/riverside/".into(), "Plain text".into()])?;
+        let links = parse_links(&[
+            "  ".into(),
+            "Riverside=/riverside/".into(),
+            "Plain text".into(),
+        ])?;
         assert_eq!(
             links,
             vec![

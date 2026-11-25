@@ -212,4 +212,31 @@ fn mobile_quiet_table_selector_errors_and_design_preview_snapshot() {
         .success()
         .stderr(predicate::str::contains("Rendered"));
     assert_eq!(&std::fs::read(&preview_out).unwrap()[1..4], b"PNG");
+
+    // design set --template molly --snapshot renders the live home page after saving
+    server
+        .mock("PATCH", "/api/v3/design/")
+        .with_body(r#"{"template":"molly","styles":{"name":"classic","vars":{}}}"#)
+        .create();
+    let set_out = dir.path().join("design").join("live.png");
+    common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_API_KEY", "rg_live_test")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "-o",
+            "table",
+            "design",
+            "set",
+            "--template",
+            "molly",
+            "--snapshot",
+        ])
+        .arg(&set_out)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Rendered"));
+    assert_eq!(&std::fs::read(&set_out).unwrap()[1..4], b"PNG");
 }

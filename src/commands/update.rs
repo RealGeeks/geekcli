@@ -235,20 +235,37 @@ pub fn run(printer: Printer, args: &UpdateArgs) -> Result<()> {
 /// (`client_too_old`) instead. Failures are silent; this must never break a
 /// command.
 pub fn notify(printer: Printer) {
-    let wanted = printer.format == Format::Table
-        && std::io::stderr().is_terminal()
-        && env("CI").is_none()
-        && env("GEEKCLI_NO_UPDATE_CHECK").is_none();
-    if !wanted {
-        return;
-    }
     let Ok(dir) = config::config_dir() else {
         return;
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    if let Some(version) = newer_release(&dir.join(CHECK_FILE), now, latest_version) {
+    notify_with(
+        printer,
+        std::io::stderr().is_terminal(),
+        env("CI").is_some(),
+        env("GEEKCLI_NO_UPDATE_CHECK").is_some(),
+        &dir,
+        now,
+        latest_version,
+    );
+}
+
+fn notify_with(
+    printer: Printer,
+    is_tty: bool,
+    in_ci: bool,
+    disabled: bool,
+    config_dir: &Path,
+    now: u64,
+    latest: impl FnOnce() -> Option<String>,
+) {
+    let wanted = printer.format == Format::Table && is_tty && !in_ci && !disabled;
+    if !wanted {
+        return;
+    }
+    if let Some(version) = newer_release(&config_dir.join(CHECK_FILE), now, latest) {
         printer.note(&format!(
             "geekcli {version} is available (this is {CURRENT}); run `geekcli update`"
         ));
@@ -607,6 +624,40 @@ mod tests {
             .create();
         assert_eq!(latest_version_from(&source, &target), None);
         err.assert();
+        Ok(())
+    }
+
+    #[test]
+    fn notify_with_respects_tty_ci_opt_out_and_table_mode() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let table = Printer::new(Some(Format::Table), false);
+        let json_printer = Printer::new(Some(Format::Json), false);
+        let called = std::cell::Cell::new(0u32);
+        let count_lookup = || {
+            called.set(called.get() + 1);
+            Some("999.0.0".to_string())
+        };
+
+        // Suppressed when not table, not tty, in CI, or opted out
+        notify_with(
+            json_printer,
+            true,
+            false,
+            false,
+            dir.path(),
+            1000,
+            count_lookup,
+        );
+        notify_with(table, false, false, false, dir.path(), 1000, count_lookup);
+        notify_with(table, true, true, false, dir.path(), 1000, count_lookup);
+        notify_with(table, true, false, true, dir.path(), 1000, count_lookup);
+        assert_eq!(called.get(), 0);
+
+        // Runs on interactive table terminal and records stamp so immediate repeat is skipped
+        notify_with(table, true, false, false, dir.path(), 1000, count_lookup);
+        assert_eq!(called.get(), 1);
+        notify_with(table, true, false, false, dir.path(), 1001, count_lookup);
+        assert_eq!(called.get(), 1);
         Ok(())
     }
 }
