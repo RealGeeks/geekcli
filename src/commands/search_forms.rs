@@ -113,15 +113,15 @@ pub fn run(ctx: &Context, cmd: SearchFormsCommand) -> Result<()> {
                 .cloned()
                 .unwrap_or_default();
             if let Some(group) = &args.group {
-                let g = group.to_ascii_lowercase();
-                rows.retain(|f| text(f, "group").to_ascii_lowercase().contains(&g));
+                let g = group.to_lowercase();
+                rows.retain(|f| text(f, "group").to_lowercase().contains(&g));
             }
             if let Some(needle) = &args.search {
-                let n = needle.to_ascii_lowercase();
+                let n = needle.to_lowercase();
                 rows.retain(|f| {
                     ["key", "label"]
                         .iter()
-                        .any(|k| text(f, k).to_ascii_lowercase().contains(&n))
+                        .any(|k| text(f, k).to_lowercase().contains(&n))
                 });
             }
             ctx.printer.list(&rows, None, FIELD_COLUMNS)

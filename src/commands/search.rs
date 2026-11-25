@@ -7,7 +7,7 @@
 //! commands make that visible: every criterion you pass is checked against
 //! what the site echoes back, and anything ignored is reported.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use clap::{Args, Subcommand};
 use serde_json::{json, Map, Value};
@@ -181,6 +181,11 @@ pub fn run(ctx: &Context, cmd: SearchCommand) -> Result<()> {
             all,
             fuzzy,
         } => {
+            if field == POLYGON {
+                return Err(Error::Usage(
+                    "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
+                ));
+            }
             if all {
                 all_choices(ctx, &field, search.as_deref(), fuzzy.as_deref())
             } else {
@@ -195,6 +200,30 @@ pub fn run(ctx: &Context, cmd: SearchCommand) -> Result<()> {
 
 // ---------------------------------------------------------------- criteria
 
+/// Whether `prefix` looks like a bare `host` or `host:port` (domain with a dot,
+/// `localhost`, or an IPv4/IPv6 literal) with no path, query, fragment, or userinfo.
+fn looks_like_host(prefix: &str) -> bool {
+    let Ok(url) = url::Url::parse(&format!("https://{prefix}")) else {
+        return false;
+    };
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) => true,
+        Some(url::Host::Domain(d)) => {
+            d.eq_ignore_ascii_case("localhost")
+                || (d.contains('.') && d.split('.').all(|label| !label.is_empty()))
+        }
+        None => false,
+    }
+}
+
 /// Turn CLI items into a query. Accepts `key=value` items and, as a
 /// convenience, a whole query string or URL copied from the site.
 pub fn parse_criteria(items: &[String]) -> Result<Query> {
@@ -204,30 +233,71 @@ pub fn parse_criteria(items: &[String]) -> Result<Query> {
         if item.is_empty() {
             continue;
         }
-        let looks_like_url = item.starts_with('?')
-            || item.starts_with("http://")
-            || item.starts_with("https://")
-            || (item.starts_with('/') && item.contains('?'))
-            || (item.contains('&') && item.contains('='));
-        if looks_like_url {
-            let qs = match item.find('?') {
-                Some(idx) => &item[idx + 1..],
-                None => item,
+        let before_frag = item.split('#').next().unwrap_or_default();
+        let starts_with_scheme = item
+            .get(..7)
+            .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+            || item
+                .get(..8)
+                .is_some_and(|p| p.eq_ignore_ascii_case("https://"));
+        let bare_parts: Vec<&str> = before_frag.split('&').filter(|s| !s.is_empty()).collect();
+        let is_bare_query = !starts_with_scheme
+            && bare_parts.len() >= 2
+            && bare_parts.iter().all(|s| {
+                s.split_once('=')
+                    .is_some_and(|(k, _)| !k.is_empty() && !k.chars().any(char::is_whitespace))
+            });
+        let schemeless_url_qs = if starts_with_scheme {
+            None
+        } else {
+            before_frag.split_once('?').and_then(|(prefix, rest)| {
+                let is_url_prefix = prefix.is_empty()
+                    || prefix.starts_with('/')
+                    || (!prefix.contains('=')
+                        && !prefix.chars().any(char::is_whitespace)
+                        && (prefix.contains('/') || looks_like_host(prefix)));
+                is_url_prefix.then_some(rest)
+            })
+        };
+        let qs = if starts_with_scheme {
+            let Some((_, qs)) = before_frag.split_once('?') else {
+                return Err(Error::Usage(format!(
+                    "URL '{item}' has no query string criteria"
+                )));
             };
-            let qs = qs.split('#').next().unwrap_or_default();
+            Some(qs)
+        } else if let Some(rest) = schemeless_url_qs {
+            Some(rest)
+        } else if is_bare_query {
+            Some(before_frag)
+        } else {
+            None
+        };
+        if let Some(qs) = qs {
             for (k, v) in url::form_urlencoded::parse(qs.as_bytes()) {
-                if !k.is_empty() {
-                    query.push((k.to_string(), v.to_string()));
+                if k.is_empty() {
+                    return Err(Error::Usage(format!(
+                        "'{item}' has a criterion with an empty key (`={v}`); every value needs a field name"
+                    )));
                 }
+                query.push((k.to_string(), v.to_string()));
             }
             continue;
         }
+        // one pair with a stray `&` copied along (`city=Miami&`, `&city=Miami`)
+        let item = item.trim_matches('&').trim();
         let Some((k, v)) = item.split_once('=') else {
             return Err(Error::Usage(format!(
                 "expected key=value, got '{item}' (run `geekcli search fields` for the field names)"
             )));
         };
-        query.push((k.trim().to_string(), v.trim().to_string()));
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(Error::Usage(format!(
+                "expected key=value with a non-empty key, got '{item}' (run `geekcli search fields` for the field names)"
+            )));
+        }
+        query.push((k.to_string(), v.trim().to_string()));
     }
     if query.is_empty() {
         return Err(Error::Usage("no criteria given".into()));
@@ -542,6 +612,14 @@ impl FieldRow {
 
 fn form_fields(ctx: &Context) -> Result<Vec<Value>> {
     let form = ctx.client.site_get(FORM_PATH, &Query::new())?.body;
+    let valid = form.is_object()
+        && (form.get("primary").is_some_and(Value::is_array)
+            || form.get("secondary").is_some_and(Value::is_array));
+    if !valid {
+        return Err(Error::Other(
+            "the advanced search form response did not contain primary or secondary fields".into(),
+        ));
+    }
     let mut rows = Vec::new();
     for section in ["primary", "secondary"] {
         let Some(items) = form.get(section).and_then(Value::as_array) else {
@@ -627,7 +705,7 @@ fn catalog_rows(body: &Value) -> Option<Vec<Value>> {
             .into_json(),
         );
     }
-    Some(rows)
+    (!rows.is_empty()).then_some(rows)
 }
 
 fn catalog_fields(ctx: &Context) -> Result<Vec<Value>> {
@@ -672,13 +750,17 @@ fn fields(ctx: &Context) -> Result<()> {
         let mut merged: Vec<Value> = Vec::new();
         for row in rows {
             let attr = row.get("attr").cloned().unwrap_or(Value::Null);
-            if let Some(existing) = merged.iter_mut().find(|m| {
-                m.get("attr") == Some(&attr) && m.get("value").is_some_and(|v| !v.is_null())
-            }) {
-                let values = format!("{}, {}", cell(&existing["value"]), cell(&row["value"]));
-                existing["value"] = Value::String(values);
-                existing["label"] = Value::String("Property type".into());
-                continue;
+            if !attr.is_null() && row.get("value").is_some_and(|v| !v.is_null()) {
+                if let Some(existing) = merged.iter_mut().find(|m| {
+                    m.get("attr") == Some(&attr) && m.get("value").is_some_and(|v| !v.is_null())
+                }) {
+                    let values = format!("{}, {}", cell(&existing["value"]), cell(&row["value"]));
+                    existing["value"] = Value::String(values);
+                    if attr.as_str() == Some("type") {
+                        existing["label"] = Value::String("Property type".into());
+                    }
+                    continue;
+                }
             }
             merged.push(row);
         }
@@ -727,11 +809,32 @@ fn choice_rows(rows: &[&Value]) -> Vec<Value> {
     out
 }
 
+/// Remove duplicate `{value, label}` choices while preserving order.
+fn dedup_choices(choices: Vec<Value>) -> Vec<Value> {
+    let mut seen: HashSet<(String, String)> = HashSet::with_capacity(choices.len());
+    let mut out = Vec::with_capacity(choices.len());
+    for choice in choices {
+        let key = (choice["value"].to_string(), choice["label"].to_string());
+        if seen.insert(key) {
+            out.push(choice);
+        }
+    }
+    out
+}
+
 /// The form's choices for a field, also looked up by the catalog row's
 /// params (the form lists `list_price_min`, the catalog `list_price`).
 fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Vec<Value>> {
     let form = form_fields(ctx).ok()?;
-    let mut names: Vec<String> = vec![field.to_string()];
+    let exact: Vec<&Value> = form
+        .iter()
+        .filter(|r| r.get("attr").and_then(Value::as_str) == Some(field))
+        .collect();
+    let exact_out = dedup_choices(choice_rows(&exact));
+    if !exact_out.is_empty() {
+        return Some(exact_out);
+    }
+    let mut names: Vec<String> = Vec::new();
     for row in catalog {
         for key in ["attr", "params"] {
             match row.get(key) {
@@ -753,7 +856,7 @@ fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Ve
                 .is_some_and(|a| names.iter().any(|n| n == a))
         })
         .collect();
-    let out = choice_rows(&rows);
+    let out = dedup_choices(choice_rows(&rows));
     (!out.is_empty()).then_some(out)
 }
 
@@ -762,11 +865,6 @@ fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Ve
 /// catalog) the advanced form's default-county list; `--all` reads the
 /// autocomplete index instead.
 fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>) -> Result<()> {
-    if field == POLYGON {
-        return Err(Error::Usage(
-            "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
-        ));
-    }
     let fields = load_fields(ctx, true)?;
     let matching = field_rows(&fields.rows, field);
     if matching.is_empty() {
@@ -793,10 +891,10 @@ fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>
         ctx.printer.note(&format!("Values from {source}."));
     }
     if let Some(needle) = needle {
-        let needle = needle.to_ascii_lowercase();
+        let needle = needle.to_lowercase();
         out.retain(|c| {
-            cell(&c["value"]).to_ascii_lowercase().contains(&needle)
-                || cell(&c["label"]).to_ascii_lowercase().contains(&needle)
+            cell(&c["value"]).to_lowercase().contains(&needle)
+                || cell(&c["label"]).to_lowercase().contains(&needle)
         });
     }
     print_choices(ctx, out, fuzzy)
@@ -837,7 +935,13 @@ pub const AUTOCOMPLETE_PATH: &str = "api/v2/search/autocomplete-options/";
 /// all cities, unlike the advanced form's choice list that follows the
 /// default county.
 fn autocomplete_index(ctx: &Context) -> Result<Value> {
-    Ok(ctx.client.site_get(AUTOCOMPLETE_PATH, &Query::new())?.body)
+    let body = ctx.client.site_get(AUTOCOMPLETE_PATH, &Query::new())?.body;
+    if !body.is_array() {
+        return Err(Error::Other(
+            "the autocomplete index response was not a JSON array".into(),
+        ));
+    }
+    Ok(body)
 }
 
 /// Sorted, de-duplicated values for one field from the autocomplete index.
@@ -866,10 +970,10 @@ fn all_choices(
     fuzzy: Option<&str>,
 ) -> Result<()> {
     let index = autocomplete_index(ctx)?;
-    let needle = needle.map(str::to_ascii_lowercase);
+    let needle = needle.map(str::to_lowercase);
     let mut values = autocomplete_values(&index, field);
     if let Some(n) = &needle {
-        values.retain(|v| v.to_ascii_lowercase().contains(n));
+        values.retain(|v| v.to_lowercase().contains(n));
     }
     if values.is_empty() {
         return Err(not_found(format!(
@@ -942,20 +1046,44 @@ fn closest(value: &str, candidates: &[String], limit: usize) -> Vec<String> {
 
 // ------------------------------------------------------------------- check
 
-/// A choice list made only of numbers (prices, beds, square feet) is a set
-/// of presets, not the only values the search takes.
+/// A choice list made only of finite numbers (prices, beds, square feet) is a
+/// set of presets, not the only values the search takes.
 fn is_numeric_list(values: &[String]) -> bool {
     let mut any = false;
     for v in values {
         if v.is_empty() || v.eq_ignore_ascii_case("all") {
             continue;
         }
-        if v.replace(',', "").parse::<f64>().is_err() {
+        if !v.replace(',', "").parse::<f64>().is_ok_and(f64::is_finite) {
             return false;
         }
         any = true;
     }
     any
+}
+
+/// Whether `field` is a postal/ZIP code field whose numeric values are discrete
+/// codes rather than numeric range presets.
+fn is_zip_field(field: &str) -> bool {
+    matches!(field, "zip" | "zipcode" | "zip_code" | "postal_code")
+}
+
+/// Whether a field is a numeric range/preset field (e.g. `min_max_field`,
+/// `list_price_min`, `beds_min`) rather than a discrete code list like `zip`.
+fn is_numeric_preset(field: &str, rows: &[&Value], static_candidates: &[String]) -> bool {
+    let is_min_max = rows.iter().any(|r| {
+        r.get("widget").and_then(Value::as_str) == Some("min_max_field")
+            || r.get("flags")
+                .and_then(Value::as_array)
+                .is_some_and(|f| f.iter().any(|v| v.as_str() == Some("min_max_field")))
+    });
+    if is_min_max || field.ends_with("_min") || field.ends_with("_max") {
+        return true;
+    }
+    if is_zip_field(field) {
+        return false;
+    }
+    is_numeric_list(static_candidates)
 }
 
 /// Result of comparing criteria values with the site's choices.
@@ -1002,6 +1130,7 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
         }
     };
     let mut index: Option<Value> = None;
+    let mut autocomplete_failed = false;
     for (field, values) in by_field {
         let rows = field_rows(&fields.rows, &field);
         // the site takes true/1/yes for yes-no fields, not just the listed values
@@ -1015,25 +1144,34 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
             .iter()
             .map(|c| cell(&c["value"]))
             .collect();
-        // the form submits `all` for "no preference" on any listed field
-        let values: Vec<String> = if candidates.is_empty() {
-            values
-        } else {
-            values.into_iter().filter(|v| v != "all").collect()
-        };
-        if is_numeric_list(&candidates) {
+        if is_numeric_preset(&field, &rows, &candidates) {
             continue;
         }
-        let settled = !candidates.is_empty() && values.iter().all(|v| candidates.contains(v));
+        // the form submits `all` for "no preference" on any listed field
+        let values: Vec<String> = values.into_iter().filter(|v| v != "all").collect();
+        if values.is_empty() {
+            // nothing to compare, so the field was not checked
+            continue;
+        }
+        let static_catalog_complete = fields.source == FieldSource::Catalog
+            && !candidates.is_empty()
+            && rows
+                .iter()
+                .all(|r| r.get("dynamic").and_then(Value::as_bool) != Some(true));
+        let settled = static_catalog_complete
+            || (!candidates.is_empty() && values.iter().all(|v| candidates.contains(v)));
         if !settled {
-            if index.is_none() {
+            if index.is_none() && !autocomplete_failed {
                 match autocomplete_index(ctx) {
                     Ok(body) => index = Some(body),
                     Err(e) => {
                         result.error = Some(format!("could not read the autocomplete index: {e}"));
-                        index = Some(Value::Null);
+                        autocomplete_failed = true;
                     }
                 }
+            }
+            if autocomplete_failed {
+                continue;
             }
             if let Some(body) = &index {
                 candidates.extend(autocomplete_values(body, &field));
@@ -1041,7 +1179,7 @@ fn check_values(ctx: &Context, query: &Query, ignored: &[String]) -> ValueCheck 
         }
         candidates.sort();
         candidates.dedup();
-        if candidates.is_empty() || is_numeric_list(&candidates) {
+        if candidates.is_empty() || (!is_zip_field(&field) && is_numeric_list(&candidates)) {
             continue;
         }
         for value in &values {
@@ -1308,10 +1446,18 @@ fn run_search(ctx: &Context, args: &RunArgs) -> Result<()> {
                 .as_ref()
                 .map(|r| format!(" (count limited by {r})"))
                 .unwrap_or_default();
-            ctx.printer.note(&format!(
-                "{count} matching {noun}{limit}, page {} of {} shown",
-                args.page, args.per_page
-            ));
+            let pages = total
+                .filter(|_| args.per_page > 0)
+                .map(|t| t.div_ceil(u64::from(args.per_page)).max(1));
+            let paging = match pages {
+                Some(total_pages) if limited.is_some() => {
+                    format!("page {} of {total_pages}+ shown", args.page)
+                }
+                Some(total_pages) => format!("page {} of {total_pages} shown", args.page),
+                None => format!("page {} ({} per page)", args.page, args.per_page),
+            };
+            ctx.printer
+                .note(&format!("{count} matching {noun}{limit}, {paging}"));
             Ok(())
         }
         Format::Json | Format::Jsonl => ctx.printer.raw(&json!({
@@ -1342,23 +1488,28 @@ fn url(ctx: &Context, args: &UrlArgs) -> Result<()> {
         "results_path": format!("/search/results/?{qs}"),
         "map_path": format!("/map_search/results/?{qs}"),
     });
+    if !understood.ignored.is_empty() {
+        ctx.printer.raw(&doc)?;
+        return Err(ignored_error(&understood.ignored));
+    }
     if args.save {
         let saved = ctx.client.site_post(SEARCH_PATH, &canonical)?.body;
-        if let Some(id) = saved.get("search_id").and_then(Value::as_str) {
-            doc["search_id"] = Value::String(id.to_string());
-            doc["search_id_int"] = saved.get("search_id_int").cloned().unwrap_or(Value::Null);
-            doc["results_path"] = Value::String(format!("/search/results/{id}/"));
-            doc["map_path"] = Value::String(format!("/map_search/results/{id}/1/"));
-            doc["results_url"] =
-                Value::String(ctx.client.site_url(&format!("search/results/{id}/")));
-        }
+        let Some(id) = saved
+            .get("search_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        else {
+            return Err(Error::Other(
+                "the site did not return a search_id when saving the search".into(),
+            ));
+        };
+        doc["search_id"] = Value::String(id.to_string());
+        doc["search_id_int"] = saved.get("search_id_int").cloned().unwrap_or(Value::Null);
+        doc["results_path"] = Value::String(format!("/search/results/{id}/"));
+        doc["map_path"] = Value::String(format!("/map_search/results/{id}/1/"));
+        doc["results_url"] = Value::String(ctx.client.site_url(&format!("search/results/{id}/")));
     }
-    ctx.printer.raw(&doc)?;
-    if understood.ignored.is_empty() {
-        Ok(())
-    } else {
-        Err(ignored_error(&understood.ignored))
-    }
+    ctx.printer.raw(&doc)
 }
 
 // ------------------------------------------------------- saved searches
@@ -1515,5 +1666,178 @@ mod tests {
         assert!(is_numeric_list(&list(&["all", "100000", "1,000,000"])));
         assert!(!is_numeric_list(&list(&["all"])));
         assert!(!is_numeric_list(&list(&["Miami", "33458"])));
+        assert!(!is_numeric_list(&list(&["NaN"])));
+        assert!(!is_numeric_list(&list(&["inf"])));
+        assert!(!is_numeric_list(&list(&["-infinity"])));
+        assert!(!is_numeric_list(&list(&["100", "NaN"])));
+    }
+
+    #[test]
+    fn catalog_rows_returns_none_for_empty_or_malformed_arrays() {
+        assert!(catalog_rows(&json!([])).is_none());
+        assert!(catalog_rows(&json!({"fields": []})).is_none());
+        assert!(catalog_rows(&json!([{"label": "no id"}])).is_none());
+        assert!(catalog_rows(&json!({"raw": "<html>oops</html>"})).is_none());
+    }
+
+    #[test]
+    fn parse_criteria_preserves_ampersand_in_values() {
+        let q = parse_criteria(&["subdivision=Town & Country".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("subdivision".to_string(), "Town & Country".to_string())]
+        );
+        let q = parse_criteria(&["features=55+ & Pool".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("features".to_string(), "55+ & Pool".to_string())]);
+        let q = parse_criteria(&["city=Miami&type=res".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string())
+            ]
+        );
+        let q =
+            parse_criteria(&["HTTPS://www.example.com/search/results/?city=Miami&type=res".into()])
+                .unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_criteria_rejects_urls_without_query_string() {
+        for bad in [
+            "https://www.example.com/search/results/a/",
+            "HTTP://www.example.com/search/results/a/",
+            "https://www.example.com/search/results/a/#?fake=1",
+        ] {
+            assert!(
+                matches!(parse_criteria(&[bad.into()]), Err(Error::Usage(_))),
+                "expected usage error for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_criteria_rejects_empty_keys() {
+        for bad in [
+            "=Miami",
+            "=",
+            "   =Miami",
+            // inside a pasted URL or query string too, not silently dropped
+            "?=Miami&city=X",
+            "https://www.example.com/search/results/?=Miami&city=X",
+        ] {
+            assert!(
+                matches!(parse_criteria(&[bad.into()]), Err(Error::Usage(_))),
+                "expected usage error for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_criteria_handles_schemeless_urls_and_preserves_question_marks_in_values() {
+        let q = parse_criteria(&["www.example.com/search/results/?city=Miami&type=res".into()])
+            .unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["www.example.com/search/results/?city=Miami".into()])
+            .unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["www.example.com/search/results/?city=Key+Biscayne#top".into()])
+            .unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Key Biscayne".to_string())]);
+        let q = parse_criteria(&["note=what?".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("note".to_string(), "what?".to_string())]);
+        let q = parse_criteria(&["url=https://a.com/x?y=1".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("url".to_string(), "https://a.com/x?y=1".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_criteria_handles_pathless_schemeless_urls_and_negatives() {
+        let q = parse_criteria(&["www.example.com?city=Miami&type=res".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["www.example.com?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q =
+            parse_criteria(&["example.com:8080?city=Key+Biscayne#top".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Key Biscayne".to_string())]);
+        let q = parse_criteria(&["localhost:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["127.0.0.1:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["[::1]:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+
+        // Preservation / negative cases
+        let q = parse_criteria(&["note=what?".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("note".to_string(), "what?".to_string())]);
+        let q = parse_criteria(&["url=https://a.com/x?y=1".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("url".to_string(), "https://a.com/x?y=1".to_string())]
+        );
+        let q = parse_criteria(&["subdivision=Town & Country".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("subdivision".to_string(), "Town & Country".to_string())]
+        );
+        let q = parse_criteria(&["foo?bar=1".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("foo?bar".to_string(), "1".to_string())]);
+
+        // Empty query string after `?` on a host-only prefix yields Usage("no criteria given")
+        assert!(matches!(
+            parse_criteria(&["www.example.com?".into()]),
+            Err(Error::Usage(ref msg)) if msg == "no criteria given"
+        ));
+    }
+
+    #[test]
+    fn parse_criteria_handles_fragments_and_trailing_ampersand() {
+        let q = parse_criteria(&["city=Miami&type=res#a&b".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["address=Suite #1&b=2".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("address".to_string(), "Suite #1&b=2".to_string())]);
+        // A stray leading/trailing `&` on one pair is dropped; the value
+        // stays literal (`+` is not decoded to a space).
+        let q = parse_criteria(&["features=55+&".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("features".to_string(), "55+".to_string())]);
+        let q = parse_criteria(&["city=Miami&".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["&city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["city=Miami&type=res&".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
     }
 }

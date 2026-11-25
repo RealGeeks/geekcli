@@ -928,3 +928,915 @@ fn check_validates_values_against_the_catalog() {
         serde_json::json!(["city", "type", "subdivision"])
     );
 }
+
+#[test]
+fn url_save_does_not_post_when_criteria_are_ignored() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{}}"#)
+        .create();
+    let post = server
+        .mock("POST", "/api/v2/search/")
+        .match_query(Matcher::Any)
+        .expect(0)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "url", "q=Buckhead", "--save"])
+        .assert()
+        .code(5);
+    post.assert();
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["ignored"], serde_json::json!(["q"]));
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "ignored_criteria");
+}
+
+#[test]
+fn url_save_errors_when_search_id_is_missing() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("POST", "/api/v2/search/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_body("{}")
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "url", "city=Miami", "--save"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("search_id"));
+}
+
+#[test]
+fn check_validates_zip_from_autocomplete_and_keeps_numeric_presets() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = r#"[
+{"id":"zip","label":"Zip","widget":"multiselect","flags":["dynamic"],"choices":[]},
+{"id":"list_price","label":"Price","widget":"min_max_field","flags":["min_max_field"],"choices":[{"label":"$1,000,000","val":1000000}]},
+{"id":"beds","label":"Beds","widget":"min_max_field","flags":["min_max_field"],"choices":[{"label":"2","val":2},{"label":"3","val":3}]}
+]"#;
+    let index_body = r#"[{"field":"zip","value":"33131"},{"field":"zip","value":"02138"}]"#;
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(catalog)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(index_body)
+        .create();
+
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::UrlEncoded("zip".into(), "99999".into()))
+        .with_body(r#"{"description":"d","criteria":{"zip":["99999"]}}"#)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "zip=99999", "--strict"])
+        .assert()
+        .code(5);
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["values_checked"], serde_json::json!(["zip"]));
+    let warnings = doc["value_warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{doc}");
+    assert_eq!(warnings[0]["field"], "zip");
+    assert_eq!(warnings[0]["kind"], "unknown_value");
+    let suggestions = warnings[0]["suggestions"].as_array().unwrap();
+    assert!(
+        suggestions.contains(&serde_json::json!("33131"))
+            && suggestions.contains(&serde_json::json!("02138")),
+        "{doc}"
+    );
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_mismatch");
+
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("list_price_min".into(), "250000".into()),
+            Matcher::UrlEncoded("beds_min".into(), "3".into()),
+            Matcher::UrlEncoded("zip".into(), "33131".into()),
+        ]))
+        .with_body(
+            r#"{"description":"d","criteria":{"list_price_min":["250000"],"beds_min":["3"],"zip":["33131"]}}"#,
+        )
+        .create();
+    let out = cmd(&server, &dir)
+        .args([
+            "search",
+            "check",
+            "list_price_min=250000",
+            "beds_min=3",
+            "zip=33131",
+            "--strict",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["values_checked"], serde_json::json!(["zip"]));
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_validates_zip_with_static_form_choices() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(
+            r#"{"primary":[{"attr":"zip","label":"Zip","widget_type":"select","choices":[["33131","33131"],["02138","02138"]]}],"secondary":[]}"#,
+        )
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body("[]")
+        .create();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"zip":["99999"]}}"#)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "zip=99999", "--strict"])
+        .assert()
+        .code(5);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_mismatch");
+}
+
+#[test]
+fn check_strict_exits_1_when_autocomplete_fails_on_unsettled_field() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Mclean"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .create();
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=Mclean", "--strict"])
+        .assert()
+        .code(1);
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+    assert_eq!(doc["values_checked"], serde_json::json!([]));
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=Mclean"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn fields_falls_back_when_catalog_is_empty_or_malformed() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body("[]")
+        .create();
+    let form = server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(1)
+        .create();
+    let assert = cmd(&server, &dir)
+        .args(["search", "fields"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("field catalog could not be read"));
+    form.assert();
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["results"][0]["section"], "primary");
+}
+
+#[test]
+fn check_strict_exits_1_on_html_form_and_autocomplete_responses() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body("<html>maintenance</html>")
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body("<html>maintenance</html>")
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body("[]")
+        .expect(0)
+        .create();
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=Miami", "--strict"])
+        .assert()
+        .code(1);
+    index.assert();
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+
+    let mut server2 = Server::new();
+    server2
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Mclean"]}}"#)
+        .create();
+    mock_catalog(&mut server2);
+    server2
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body("<html>maintenance</html>")
+        .create();
+    let assert = cmd(&server2, &dir)
+        .args(["search", "check", "city=Mclean", "--strict"])
+        .assert()
+        .code(1);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+}
+
+#[test]
+fn check_skips_empty_min_max_catalog_field_without_fetching_autocomplete() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"beds_min":["3"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(
+            r#"[{"id":"beds","label":"Beds","widget":"min_max_field","flags":["min_max_field"],"choices":[]}]"#,
+        )
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "beds_min=3", "--strict"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    index.assert();
+    let doc = parse(&out);
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_allows_all_on_dynamic_catalog_field_without_fetching_autocomplete() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["all"]}}"#)
+        .create();
+    mock_catalog(&mut server);
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "city=all", "--strict"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    index.assert();
+    let doc = parse(&out);
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_does_not_list_a_field_as_checked_when_its_only_value_is_all() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"type":["all"]}}"#)
+        .create();
+    mock_catalog(&mut server);
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "type=all"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    // `all` means "no preference": nothing was compared
+    assert_eq!(doc["values_checked"], serde_json::json!([]), "{doc}");
+}
+
+#[test]
+fn check_does_not_emit_partial_warnings_when_autocomplete_fails() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["McLean"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(
+            r#"{"primary":[{"attr":"city","label":"City","widget_type":"multiselect","choices":[["all","All"],["Mclean","Mclean"],["Miami","Miami"]]}],"secondary":[]}"#,
+        )
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .create();
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=McLean"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["values_checked"], serde_json::json!([]));
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+    assert!(doc["value_check_error"].is_string(), "{doc}");
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "city=McLean", "--strict"])
+        .assert()
+        .code(1);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_check_unavailable");
+
+    let mut server2 = Server::new();
+    server2
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"type":["RES"],"city":["McLean"]}}"#)
+        .create();
+    server2
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(CATALOG)
+        .create();
+    server2
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .create();
+
+    let assert = cmd(&server2, &dir)
+        .args(["search", "check", "type=RES", "city=McLean"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+    let doc = parse(&assert.get_output().stdout);
+    assert_eq!(doc["values_checked"], serde_json::json!(["type"]));
+    let warnings = doc["value_warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{doc}");
+    assert_eq!(warnings[0]["field"], "type");
+    assert_eq!(warnings[0]["kind"], "case_mismatch");
+    assert!(doc["value_check_error"].is_string(), "{doc}");
+
+    let assert = cmd(&server2, &dir)
+        .args(["search", "check", "type=RES", "city=McLean", "--strict"])
+        .assert()
+        .code(5);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_mismatch");
+    let fields = err["error"]["fields"].as_object().unwrap();
+    assert!(fields.contains_key("type"), "{err}");
+    assert!(!fields.contains_key("city"), "{err}");
+}
+
+#[test]
+fn check_skips_numeric_multiselect_catalog_presets() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::UrlEncoded("garage".into(), "4".into()))
+        .with_body(r#"{"description":"d","criteria":{"garage":["4"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(
+            r#"[{"id":"garage","label":"Garage","widget":"multiselect","flags":[],"choices":[{"label":"1","val":1},{"label":"2","val":2},{"label":"3","val":3}]}]"#,
+        )
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "garage=4", "--strict"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    index.assert();
+    let doc = parse(&out);
+    assert_eq!(doc["values_checked"], serde_json::json!([]));
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_skips_non_zip_numeric_autocomplete_fields() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::UrlEncoded("mls_number".into(), "999999".into()))
+        .with_body(r#"{"description":"d","criteria":{"mls_number":["999999"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(
+            r#"[{"id":"mls_number","label":"MLS #","widget":"text","flags":[],"choices":[]}]"#,
+        )
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(
+            r#"[{"field":"mls_number","value":"100001"},{"field":"mls_number","value":"100002"}]"#,
+        )
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "mls_number=999999", "--strict"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["values_checked"], serde_json::json!([]));
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_skips_min_max_suffix_fields_without_static_choices() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::UrlEncoded("beds_min".into(), "3".into()))
+        .with_body(r#"{"description":"d","criteria":{"beds_min":["3"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "beds_min=3", "--strict"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    index.assert();
+    let doc = parse(&out);
+    assert_eq!(doc["values_checked"], serde_json::json!([]));
+    assert_eq!(doc["value_warnings"], serde_json::json!([]));
+}
+
+#[test]
+fn check_validates_static_catalog_field_without_hitting_autocomplete() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"type":["RES"]}}"#)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(CATALOG)
+        .create();
+    let index = server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "type=RES"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("`res`"))
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["values_checked"], serde_json::json!(["type"]));
+    let warnings = doc["value_warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{doc}");
+    assert_eq!(warnings[0]["field"], "type");
+    assert_eq!(warnings[0]["kind"], "case_mismatch");
+    assert_eq!(warnings[0]["suggestions"], serde_json::json!(["res"]));
+
+    let assert = cmd(&server, &dir)
+        .args(["search", "check", "type=RES", "--strict"])
+        .assert()
+        .code(5);
+    let err: Value = serde_json::from_slice(&assert.get_output().stderr).unwrap();
+    assert_eq!(err["error"]["code"], "value_mismatch");
+    index.assert();
+}
+
+#[test]
+fn run_table_footer_shows_total_pages() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("city".into(), "Miami".into()),
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "10".into()),
+        ]))
+        .with_header("x-total-count", "1234")
+        .with_body("[]")
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "-o",
+            "table",
+            "search",
+            "run",
+            "city=Miami",
+            "--per-page",
+            "10",
+            "--page",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "1234 matching properties, page 1 of 124 shown",
+        ));
+
+    server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("city".into(), "Miami".into()),
+            Matcher::UrlEncoded("page".into(), "2".into()),
+            Matcher::UrlEncoded("per_page".into(), "10".into()),
+        ]))
+        .with_body("[]")
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "-o",
+            "table",
+            "search",
+            "run",
+            "city=Miami",
+            "--per-page",
+            "10",
+            "--page",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "? matching properties, page 2 (10 per page)",
+        ));
+}
+
+#[test]
+fn fields_table_merge_preserves_non_type_checkbox_labels_and_skips_null_values() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(
+            r#"{"primary":[],"secondary":[
+{"attr":"type","label":"Home","widget_type":"checkbox","value":"res"},
+{"attr":"type","label":"Condo","widget_type":"checkbox","value":"con"},
+{"attr":"status","label":"Active","widget_type":"checkbox","value":"act"},
+{"attr":"status","label":"Pending","widget_type":"checkbox","value":"pnd"},
+{"attr":"status","label":"Status Note","widget_type":"text","value":null}
+]}"#,
+        )
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["-o", "table", "search", "fields"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let table = String::from_utf8_lossy(&out);
+    assert!(table.contains("Property type"), "{table}");
+    assert!(table.contains("res, con"), "{table}");
+    assert!(table.contains("act, pnd"), "{table}");
+    assert!(
+        !table.contains("act, pnd, "),
+        "null-value row must not merge into checkbox values:\n{table}"
+    );
+    let status_line = table
+        .lines()
+        .find(|line| line.contains("act, pnd"))
+        .unwrap();
+    assert!(
+        status_line.contains("Active") && !status_line.contains("Property type"),
+        "non-type merged row must keep its label:\n{status_line}"
+    );
+}
+
+#[test]
+fn choices_from_form_does_not_duplicate_range_choices() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(
+            r#"[{"id":"beds","label":"Beds","widget":"min_max_field","flags":["min_max_field"],"choices":[]}]"#,
+        )
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(
+            r#"{"primary":[],"secondary":[
+{"attr":"beds_min","label":"Min Beds","widget_type":"select","choices":[["all","No Min"],[1,"1+"],[2,"2+"]]},
+{"attr":"beds_max","label":"Max Beds","widget_type":"select","choices":[["all","No Max"],[1,"1+"],[2,"2+"]]}
+]}"#,
+        )
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "beds_min"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    let rows = doc["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{doc}");
+    assert_eq!(rows[0]["label"], "No Min");
+
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "beds"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    let rows = doc["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 4, "{doc}");
+    let labels: Vec<&str> = rows.iter().map(|r| r["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["No Min", "1+", "2+", "No Max"]);
+}
+
+#[test]
+fn choices_polygon_all_is_usage_error_before_any_request() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let any = server
+        .mock("GET", Matcher::Any)
+        .match_query(Matcher::Any)
+        .expect(0)
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "choices", "polygon", "--all"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("polygon"));
+    cmd(&server, &dir)
+        .args(["search", "choices", "polygon"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("polygon"));
+    any.assert();
+}
+
+#[test]
+fn choices_search_matches_non_ascii_case_insensitively() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(
+            r#"[{"id":"city","label":"City","widget":"multiselect","choices":[{"label":"San JOSÉ","val":"San JOSÉ"},{"label":"Miami","val":"Miami"}]}]"#,
+        )
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(r#"[{"field":"city","value":"San JOSÉ"},{"field":"city","value":"Miami"}]"#)
+        .create();
+
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "-s", "josé"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["results"].as_array().unwrap().len(), 1, "{doc}");
+    assert_eq!(doc["results"][0]["value"], "San JOSÉ");
+
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "--all", "-s", "josé"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(doc["results"].as_array().unwrap().len(), 1, "{doc}");
+    assert_eq!(doc["results"][0]["value"], "San JOSÉ");
+}
+
+#[test]
+fn form_without_primary_or_secondary_reports_missing_sections() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body("{}")
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "fields"])
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains("primary or secondary")
+                .and(predicate::str::contains("not valid JSON").not()),
+        );
+
+    let mut server2 = Server::new();
+    server2
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server2
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(r#"{"primary":[],"secondary":[]}"#)
+        .create();
+    let out = cmd(&server2, &dir)
+        .args(["search", "fields"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let doc = parse(&out);
+    assert_eq!(attrs(&doc), ["polygon"]);
+}
+
+#[test]
+fn run_table_footer_marks_capped_total_pages() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("city".into(), "Miami".into()),
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "10".into()),
+        ]))
+        .with_header("x-total-count", "1000")
+        .with_header("x-total-count-limited", "max_results")
+        .with_body("[]")
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "-o",
+            "table",
+            "search",
+            "run",
+            "city=Miami",
+            "--per-page",
+            "10",
+            "--page",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "1000 matching properties (count limited by max_results), page 1 of 100+ shown",
+        ));
+}
+
+#[test]
+fn run_table_footer_falls_back_when_per_page_is_zero() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["Miami"]}}"#)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("city".into(), "Miami".into()),
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "0".into()),
+        ]))
+        .with_header("x-total-count", "50")
+        .with_body("[]")
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "-o",
+            "table",
+            "search",
+            "run",
+            "city=Miami",
+            "--per-page",
+            "0",
+            "--page",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("50 matching properties, page 1 (0 per page)")
+                .and(predicate::str::contains("page 1 of 1 shown").not()),
+        );
+}
