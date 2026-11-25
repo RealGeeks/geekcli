@@ -572,9 +572,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_links() {
-        let links =
-            parse_links(&["Riverside=/riverside/".into(), "Plain text".into()]).unwrap_or_default();
+    fn parses_links() -> Result<()> {
+        let links = parse_links(&["Riverside=/riverside/".into(), "Plain text".into()])?;
         assert_eq!(
             links,
             vec![
@@ -583,6 +582,7 @@ mod tests {
             ]
         );
         assert!(parse_links(&["=/x/".into()]).is_err());
+        Ok(())
     }
 
     #[test]
@@ -597,5 +597,41 @@ mod tests {
             ),
             "Areas: 1 link(s)"
         );
+        let long = format!("<p>{}</p>", "word ".repeat(30));
+        let clipped = item_summary(&json!({"type": "html", "html": long}));
+        assert!(
+            clipped.ends_with('…') && clipped.chars().count() == 81,
+            "{clipped}"
+        );
+        assert_eq!(
+            item_summary(&json!({"type": "html", "html": "<hr><br>"})),
+            "<hr><br>"
+        );
+        assert_eq!(
+            item_summary(&json!({"type": "links", "links": []})),
+            "(no header): 0 link(s)"
+        );
+    }
+
+    #[test]
+    fn reads_items_json_from_inline_file_and_rejects_bad_shapes() -> Result<()> {
+        let items = read_items_json(r#"[{"type":"html","html":"<p>a</p>"}]"#)?;
+        assert_eq!(items.len(), 1);
+        let wrapped = read_items_json(r#"{"items":[{"type":"html","html":"<p>b</p>"}]}"#)?;
+        assert_eq!(wrapped.len(), 1);
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("items.json");
+        std::fs::write(&path, r#"[{"type":"html","html":"<p>c</p>"}]"#)?;
+        let from_file = read_items_json(&format!("@{}", path.display()))?;
+        assert_eq!(from_file[0]["html"], "<p>c</p>");
+
+        assert!(matches!(
+            read_items_json(r#"{"other":1}"#),
+            Err(Error::Usage(_))
+        ));
+        assert!(matches!(read_items_json("123"), Err(Error::Usage(_))));
+        assert!(matches!(read_items_json("{bad"), Err(Error::Usage(_))));
+        Ok(())
     }
 }

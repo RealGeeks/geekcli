@@ -145,4 +145,23 @@ mod tests {
             Some("<p><strong>b</strong></p>".into())
         );
     }
+
+    #[test]
+    fn reads_html_files_verbatim_and_reports_missing_files() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let html_file = dir.path().join("page.html");
+        fs::write(&html_file, "<p>Raw *stars*</p>")?;
+        let html_path = html_file.to_string_lossy().into_owned();
+        assert_eq!(
+            read_body(None, Some(&html_path), false).ok().flatten(),
+            Some("<p>Raw *stars*</p>".into())
+        );
+        let missing = dir.path().join("missing.html");
+        let missing_path = missing.to_string_lossy().into_owned();
+        assert!(matches!(
+            read_file_or_stdin(&missing_path),
+            Err(Error::Io(m)) if m.contains("cannot read")
+        ));
+        Ok(())
+    }
 }

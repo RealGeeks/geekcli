@@ -233,4 +233,12 @@ mod tests {
         assert!(why.is_some_and(|w| w.contains(".ssh")));
         Ok(())
     }
+
+    #[test]
+    fn relative_paths_with_dot_components_resolve_against_cwd() {
+        let home = abs("/home/agent");
+        assert_eq!(refused(Path::new("./work/post.md"), &home), None);
+        let why = refused(Path::new("./.env"), &home);
+        assert!(why.as_deref().is_some_and(|w| w.contains("hidden file")));
+    }
 }

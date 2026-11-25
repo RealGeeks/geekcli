@@ -813,15 +813,13 @@ mod tests {
     }
 
     #[test]
-    fn resolves_paths() {
+    fn resolves_paths() -> Result<()> {
         let target = Target {
             domain: "x.com".into(),
             base_url: "https://x.com".into(),
             api_key: None,
         };
-        let Ok(client) = Client::new(&target, 0, false) else {
-            return;
-        };
+        let client = Client::new(&target, 0, false)?;
         let url = |p: &str| client.url(p).ok();
         assert_eq!(
             url("blog/posts/").as_deref(),
@@ -840,5 +838,117 @@ mod tests {
         assert_eq!(url("https://x.com.evil.net/api/v3/"), None);
         assert_eq!(url("http://x.com/api/v3/blog/posts/"), None);
         assert_eq!(url("https://x.com:8443/api/v3/"), None);
+        assert_eq!(client.root(), "https://x.com/api/v3/");
+        assert!(!client.has_key());
+        assert_eq!(
+            client.site_url("https://other.example/path"),
+            "https://other.example/path"
+        );
+        assert_eq!(
+            client.site_url("/search/results/"),
+            "https://x.com/search/results/"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_error_handles_legacy_v2_fields_and_plain_text_bodies() {
+        // legacy /api/v2/ shape: {"error": "message"}
+        let v2 = parse_error(400, r#"{"error":"bad query"}"#, None);
+        assert_eq!(v2.code, "http_error");
+        assert_eq!(v2.message, "bad query");
+
+        // non-array field entries (string and scalar)
+        let mixed = parse_error(
+            422,
+            r#"{"error":{"code":"validation_error","message":"invalid","fields":{"slug":"taken","count":3}}}"#,
+            Some(5),
+        );
+        assert_eq!(mixed.fields.get("slug"), Some(&vec!["taken".to_string()]));
+        assert_eq!(mixed.fields.get("count"), Some(&vec!["3".to_string()]));
+        assert_eq!(mixed.retry_after, Some(5));
+
+        // plain text non-JSON body keeps the snippet; status maps to default_code
+        for (status, code) in [
+            (401, "unauthorized"),
+            (403, "forbidden"),
+            (404, "not_found"),
+            (405, "method_not_allowed"),
+            (409, "conflict"),
+            (429, "rate_limited"),
+            (503, "server_error"),
+            (418, "http_error"),
+        ] {
+            let err = parse_error(status, "plain text reason", None);
+            assert_eq!(err.code, code);
+            assert_eq!(err.message, format!("HTTP {status}: plain text reason"));
+        }
+
+        // empty body gets the helpful API-enabled hint
+        let empty = parse_error(404, "   ", None);
+        assert!(
+            empty.message.contains("no JSON error body"),
+            "{}",
+            empty.message
+        );
+    }
+
+    #[test]
+    fn quota_warning_handles_unix_timestamp_reset_missing_reset_and_zero_limit() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (k, v) in pairs {
+                map.insert(*k, HeaderValue::from_static(v));
+            }
+            map
+        };
+        assert!(quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-limit", "0"),
+        ]))
+        .is_none());
+
+        let no_reset = quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "5"),
+            ("x-ratelimit-limit", "100"),
+        ]));
+        assert_eq!(
+            no_reset.as_deref(),
+            Some("warning: rate limit nearly used: 5 of 100 requests left in this window")
+        );
+
+        // Unix timestamp reset (>= 1_000_000_000) computes relative delta
+        let past_ts = quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "5"),
+            ("x-ratelimit-limit", "100"),
+            ("x-ratelimit-reset", "1000000000"),
+        ]));
+        assert_eq!(
+            past_ts.as_deref(),
+            Some("warning: rate limit nearly used: 5 of 100 requests left in this window (resets in 0s)")
+        );
+    }
+
+    #[test]
+    fn canonical_redirect_rejects_hostless_urls() -> std::result::Result<(), url::ParseError> {
+        let from = reqwest::Url::parse("mailto:user@example.com")?;
+        let to = reqwest::Url::parse("https://example.com/")?;
+        assert!(!is_canonical_redirect(&from, &to));
+        Ok(())
+    }
+
+    #[test]
+    fn post_multipart_requires_api_key() -> Result<()> {
+        let target = Target {
+            domain: "x.com".into(),
+            base_url: "https://x.com".into(),
+            api_key: None,
+        };
+        let client = Client::new(&target, 0, false)?;
+        let err = client.post_multipart("files/upload/", || {
+            Ok(reqwest::blocking::multipart::Form::new())
+        });
+        assert!(matches!(err, Err(Error::NotLoggedIn(_))));
+        Ok(())
     }
 }

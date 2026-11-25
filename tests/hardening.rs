@@ -2,6 +2,8 @@
 //! which names a site may claim, and what reaches the terminal.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Server, ServerGuard};
 use predicates::prelude::*;
@@ -26,14 +28,8 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        let mut cmd = Command::cargo_bin("geekcli").unwrap();
-        cmd.env_clear()
-            .env(
-                "SYSTEMROOT",
-                std::env::var("SYSTEMROOT").unwrap_or_default(),
-            )
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("GEEKCLI_SITE", "www.test.local")
+        let mut cmd = common::geekcli();
+        cmd.env("GEEKCLI_SITE", "www.test.local")
             .env("GEEKCLI_API_KEY", KEY)
             .env("GEEKCLI_BASE_URL", self.server.url())
             .env("GEEKCLI_CONFIG_DIR", self.config_dir.path());

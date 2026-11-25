@@ -2,6 +2,8 @@
 //! tests run a copy of the binary, since a successful update replaces it.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Mock, Server, ServerGuard};
 use serde_json::{json, Value};
@@ -21,18 +23,16 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        self.configure(Command::cargo_bin("geekcli").unwrap())
+        self.with_env(common::geekcli())
     }
 
-    fn configure(&self, mut cmd: Command) -> Command {
-        cmd.env_clear()
-            .env(
-                "SYSTEMROOT",
-                std::env::var("SYSTEMROOT").unwrap_or_default(),
-            )
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            // a site key in the environment must never reach the release host
-            .env("GEEKCLI_SITE", "www.test.local")
+    fn configure(&self, cmd: Command) -> Command {
+        self.with_env(common::clean_env(cmd))
+    }
+
+    fn with_env(&self, mut cmd: Command) -> Command {
+        // a site key in the environment must never reach the release host
+        cmd.env("GEEKCLI_SITE", "www.test.local")
             .env("GEEKCLI_API_KEY", "rg_live_testkey0000000000000000000000")
             .env("GEEKCLI_UPDATE_API_URL", self.server.url());
         cmd
@@ -147,6 +147,106 @@ fn the_release_host_must_be_https() {
         .unwrap();
 
     assert_eq!(out.status.code(), Some(3));
+}
+
+#[test]
+fn repo_validation_table_notes_same_tag_and_github_error_codes() {
+    // Invalid GEEKCLI_REPO without owner/name is exit 3
+    let bad_repo = Env::new()
+        .cmd()
+        .env("GEEKCLI_REPO", "not-a-repo")
+        .args(["update", "--check"])
+        .output()
+        .unwrap();
+    assert_eq!(bad_repo.status.code(), Some(3));
+    assert!(parse_error(&bad_repo.stderr)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("owner/name"));
+
+    // Custom GEEKCLI_REPO + GH_TOKEN + table check notes (newer and up-to-date)
+    let mut env = Env::new();
+    let fork_latest = env
+        .server
+        .mock("GET", "/repos/acme/geekcli/releases/latest")
+        .match_header("authorization", Matcher::Regex("ghp_custom".into()))
+        .with_body(
+            json!({
+                "tag_name": "v99.0.0",
+                "name": "v99.0.0",
+                "created_at": "2026-01-01T00:00:00Z",
+                "assets": []
+            })
+            .to_string(),
+        )
+        .create();
+    let table_newer = env
+        .cmd()
+        .env("GEEKCLI_REPO", "acme/geekcli")
+        .env("GH_TOKEN", "ghp_custom")
+        .args(["-o", "table", "update", "--check"])
+        .output()
+        .unwrap();
+    assert!(table_newer.status.success());
+    fork_latest.assert();
+    let stderr = String::from_utf8_lossy(&table_newer.stderr);
+    assert!(stderr.contains("GEEKCLI_REPO=acme/geekcli"));
+    assert!(stderr.contains("is available (this is"));
+
+    // --tag pointing at the current version is a no-op with up-to-date note in table mode
+    let mut env = Env::new();
+    env.release(
+        &format!("tags/v{CURRENT}"),
+        &format!("v{CURRENT}"),
+        &json!([]),
+    );
+    let same_tag = env
+        .cmd()
+        .args(["-o", "table", "update", "--tag", CURRENT])
+        .output()
+        .unwrap();
+    assert!(same_tag.status.success());
+    assert!(String::from_utf8_lossy(&same_tag.stderr).contains("is up to date"));
+
+    // GitHub 429 maps to exit 7 (rate_limited) with retry_after
+    let mut env = Env::new();
+    env.server
+        .mock("GET", format!("{RELEASES}/latest").as_str())
+        .with_status(429)
+        .with_header("retry-after", "30")
+        .with_body(r#"{"message":"rate limit"}"#)
+        .create();
+    let limited = env.cmd().args(["update", "--check"]).output().unwrap();
+    assert_eq!(limited.status.code(), Some(7));
+    let err = parse_error(&limited.stderr);
+    assert_eq!(err["error"]["code"], "rate_limited");
+    assert_eq!(err["error"]["retry_after"], 30);
+
+    // GitHub 404 on /releases/latest maps to exit 4 (not_found)
+    let mut env = Env::new();
+    env.server
+        .mock("GET", format!("{RELEASES}/latest").as_str())
+        .with_status(404)
+        .with_body(r#"{"message":"Not Found"}"#)
+        .create();
+    let missing = env.cmd().args(["update", "--check"]).output().unwrap();
+    assert_eq!(missing.status.code(), Some(4));
+    assert_eq!(parse_error(&missing.stderr)["error"]["code"], "not_found");
+
+    // Closed loopback port maps Transport error to exit 8 (network)
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_port = dead.local_addr().unwrap().port();
+    drop(dead);
+    let offline = Env::new()
+        .cmd()
+        .env(
+            "GEEKCLI_UPDATE_API_URL",
+            format!("http://127.0.0.1:{dead_port}"),
+        )
+        .args(["update", "--check"])
+        .output()
+        .unwrap();
+    assert_eq!(offline.status.code(), Some(8));
 }
 
 /// Replacing the binary: unix only, where a shell script can stand in for

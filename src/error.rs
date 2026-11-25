@@ -315,4 +315,70 @@ mod tests {
         assert!(api(404, "not_found").hint().is_none());
         assert!(api(422, "validation_error").hint().is_none());
     }
+
+    #[test]
+    fn maps_every_error_variant_to_stable_exit_code_and_code() {
+        assert_eq!(Error::Usage("x".into()).exit_code(), exit::USAGE);
+        assert_eq!(Error::Usage("x".into()).code(), "usage");
+        assert_eq!(Error::Config("x".into()).exit_code(), exit::AUTH);
+        assert_eq!(Error::Config("x".into()).code(), "config");
+        assert_eq!(Error::NotLoggedIn("x".into()).exit_code(), exit::AUTH);
+        assert_eq!(Error::NotLoggedIn("x".into()).code(), "not_logged_in");
+        assert_eq!(Error::Network("x".into()).exit_code(), exit::NETWORK);
+        assert_eq!(Error::Network("x".into()).code(), "network");
+        assert_eq!(Error::Io("x".into()).exit_code(), exit::GENERAL);
+        assert_eq!(Error::Io("x".into()).code(), "io");
+        assert_eq!(Error::Other("x".into()).exit_code(), exit::GENERAL);
+        assert_eq!(Error::Other("x".into()).code(), "error");
+        assert_eq!(Error::Warnings(2).exit_code(), exit::VALIDATION);
+        assert_eq!(Error::Warnings(2).code(), "warnings");
+        assert_eq!(Error::BrokenPipe.exit_code(), exit::OK);
+        assert_eq!(Error::BrokenPipe.code(), "broken_pipe");
+
+        assert_eq!(api(403, "forbidden").exit_code(), exit::AUTH);
+        assert_eq!(api(415, "unsupported").exit_code(), exit::VALIDATION);
+        assert_eq!(api(500, "server_error").exit_code(), exit::GENERAL);
+    }
+
+    #[test]
+    fn converts_io_and_serde_errors_preserving_broken_pipe() {
+        let broken = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
+        assert!(matches!(Error::from(broken), Error::BrokenPipe));
+
+        let other_io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert!(matches!(Error::from(other_io), Error::Io(m) if m.contains("denied")));
+
+        let broken_json =
+            serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"));
+        assert!(matches!(Error::from(broken_json), Error::BrokenPipe));
+
+        let io_json = serde_json::Error::io(std::io::Error::other("disk full"));
+        assert!(matches!(Error::from(io_json), Error::Io(m) if m.contains("disk full")));
+
+        if let Err(syntax) = serde_json::from_str::<serde_json::Value>("{bad") {
+            assert!(matches!(Error::from(syntax), Error::Usage(m) if m.contains("invalid JSON")));
+        }
+    }
+
+    #[test]
+    fn reqwest_errors_strip_url_secrets_and_keep_cause_chain() -> std::io::Result<()> {
+        // Bind and immediately drop a loopback listener to get an unused port
+        // that refuses connections deterministically without touching the network.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        drop(listener);
+
+        let result = reqwest::blocking::get(format!(
+            "http://127.0.0.1:{port}/api/v3/me/?secret=rg_live_must_not_leak"
+        ));
+        let err = Error::from(result.err().ok_or_else(|| {
+            std::io::Error::other("expected connection refused against closed loopback port")
+        })?);
+        assert_eq!(err.exit_code(), exit::NETWORK);
+        let text = err.to_string();
+        assert!(!text.contains("rg_live_must_not_leak"), "{text}");
+        assert!(!text.contains("127.0.0.1"), "{text}");
+        assert!(text.contains("error sending request"), "{text}");
+        Ok(())
+    }
 }

@@ -1408,13 +1408,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_pairs_and_query_strings() {
-        let q = parse_criteria(&["city=Miami".into(), "type=res".into(), "type=con".into()])
-            .unwrap_or_default();
+    fn parses_pairs_and_query_strings() -> Result<()> {
+        let q = parse_criteria(&["city=Miami".into(), "type=res".into(), "type=con".into()])?;
         assert_eq!(q.len(), 3);
-        let q =
-            parse_criteria(&["/search/results/?list_price_min=1000000&city=Key+Biscayne#x".into()])
-                .unwrap_or_default();
+        let q = parse_criteria(&[
+            "/search/results/?list_price_min=1000000&city=Key+Biscayne#x".into(),
+        ])?;
         assert_eq!(
             q,
             vec![
@@ -1422,31 +1421,49 @@ mod tests {
                 ("city".to_string(), "Key Biscayne".to_string())
             ]
         );
-        let q = parse_criteria(&["?a=1".into()]).unwrap_or_default();
+        let q = parse_criteria(&["?a=1".into()])?;
         assert_eq!(q, vec![("a".to_string(), "1".to_string())]);
+        let q = parse_criteria(&["a=1&b=2".into(), "  ".into()])?;
+        assert_eq!(
+            q,
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string())
+            ]
+        );
+        assert!(matches!(
+            parse_criteria(&["   ".into()]),
+            Err(Error::Usage(_))
+        ));
         assert!(matches!(
             parse_criteria(&["nonsense".into()]),
             Err(Error::Usage(_))
         ));
+        assert_eq!(
+            choice_row(&json!({"id": "res", "name": "Residential"})),
+            json!({"value": "res", "label": "Residential"})
+        );
+        assert_eq!(
+            choice_row(&json!("Miami")),
+            json!({"value": "Miami", "label": "Miami"})
+        );
+        Ok(())
     }
 
     #[test]
-    fn polygon_values() {
+    fn polygon_values() -> Result<()> {
         let closed = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902;38.78512,-77.24901";
-        assert!(matches!(
-            check_polygon(closed).unwrap_or_default().as_slice(),
-            []
-        ));
+        assert_eq!(check_polygon(closed)?, Vec::<String>::new());
         let open = "38.78512,-77.24901;38.79870,-77.21544;38.76632,-77.19902";
-        let w = check_polygon(open).unwrap_or_default();
+        let w = check_polygon(open)?;
         assert!(w.len() == 1 && w[0].contains("not closed"), "{w:?}");
         let swapped = "-77.24901,38.78512;-77.21544,38.79870;-77.19902,38.76632;-77.24901,38.78512";
-        let w = check_polygon(swapped).unwrap_or_default();
+        let w = check_polygon(swapped)?;
         assert!(w.len() == 1 && w[0].contains("lng,lat"), "{w:?}");
         let many: Vec<String> = (0..120)
             .map(|i| format!("{},{}", f64::from(i) / 1000.0, f64::from(i % 7) / 1000.0))
             .collect();
-        let w = check_polygon(&many.join(";")).unwrap_or_default();
+        let w = check_polygon(&many.join(";"))?;
         assert!(w.iter().any(|m| m.contains("120 points")), "{w:?}");
         for bad in [
             "",
@@ -1468,8 +1485,9 @@ mod tests {
             parse_criteria(&["polygon=1,2;3,4".into()]),
             Err(Error::Usage(_))
         ));
-        let q = parse_criteria(&[format!("polygon={closed}")]).unwrap_or_default();
+        let q = parse_criteria(&[format!("polygon={closed}")])?;
         assert_eq!(q, vec![("polygon".to_string(), closed.to_string())]);
+        Ok(())
     }
 
     #[test]

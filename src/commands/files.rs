@@ -756,8 +756,25 @@ mod tests {
 
     #[test]
     fn guesses_types() {
-        assert_eq!(guess_content_type("Photo.JPG"), "image/jpeg");
-        assert_eq!(guess_content_type("doc.pdf"), "application/pdf");
-        assert_eq!(guess_content_type("weird.bin"), "application/octet-stream");
+        for (name, mime) in [
+            ("Photo.JPG", "image/jpeg"),
+            ("pic.jpeg", "image/jpeg"),
+            ("hero.png", "image/png"),
+            ("anim.gif", "image/gif"),
+            ("icon.svg", "image/svg+xml"),
+            ("fav.ico", "image/x-icon"),
+            ("tour.mp4", "video/mp4"),
+            ("doc.pdf", "application/pdf"),
+            ("notes.txt", "text/plain"),
+            ("readme.md", "text/plain"),
+            ("page.html", "text/html"),
+            ("page.htm", "text/html"),
+            ("site.css", "text/css"),
+            ("app.js", "application/javascript"),
+            ("feed.xml", "text/xml"),
+            ("weird.bin", "application/octet-stream"),
+        ] {
+            assert_eq!(guess_content_type(name), mime, "{name}");
+        }
     }
 }

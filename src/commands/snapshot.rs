@@ -425,4 +425,53 @@ mod tests {
             Err(Error::Config(_))
         ));
     }
+
+    #[test]
+    fn resolve_url_joins_relative_paths_and_keeps_absolute_urls() -> Result<()> {
+        let target = crate::config::Target {
+            domain: "www.example.com".into(),
+            base_url: "https://www.example.com".into(),
+            api_key: None,
+        };
+        let client = crate::client::Client::new(&target, 0, false)?;
+        assert_eq!(
+            resolve_url(&client, " https://other.example/x "),
+            "https://other.example/x"
+        );
+        assert_eq!(
+            resolve_url(&client, "/blog/post/"),
+            "https://www.example.com/blog/post/"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn playwright_chromium_lists_newest_builds_first_and_ignores_others() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir(dir.path().join("chromium-1000"))?;
+        std::fs::create_dir(dir.path().join("chromium-1200"))?;
+        std::fs::create_dir(dir.path().join("firefox-9999"))?;
+        let found = playwright_chromium(dir.path(), "chrome/bin");
+        assert_eq!(
+            found,
+            vec![
+                dir.path().join("chromium-1200/chrome/bin"),
+                dir.path().join("chromium-1000/chrome/bin"),
+            ]
+        );
+        assert_eq!(
+            playwright_chromium(&dir.path().join("missing"), "chrome/bin"),
+            Vec::<PathBuf>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn find_browser_returns_existing_explicit_path() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let bin = dir.path().join("fake-chrome");
+        std::fs::write(&bin, b"")?;
+        assert_eq!(find_browser(Some(&bin))?, bin);
+        Ok(())
+    }
 }

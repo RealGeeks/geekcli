@@ -314,4 +314,28 @@ mod tests {
         assert_eq!(parse_id_or_null("12"), Ok(json!(12)));
         assert!(parse_id_or_null("abc").is_err());
     }
+
+    #[test]
+    fn merge_json_reads_at_file_and_helpers_validate_ids_and_flags() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("extra.json");
+        std::fs::write(&path, r#"{"meta_keywords": "a, b", "title": "from-file"}"#)?;
+        let mut p = Payload::default();
+        p.set("title", Some("from-flag"));
+        assert!(p.merge_json(Some(&format!("@{}", path.display()))).is_ok());
+        assert_eq!(
+            p.into_value(),
+            json!({"title": "from-flag", "meta_keywords": "a, b"})
+        );
+
+        let mut query = Query::new();
+        push_flag(&mut query, "force", false);
+        assert_eq!(query, Vec::<(String, String)>::new());
+        push_flag(&mut query, "force", true);
+        assert_eq!(query, vec![("force".to_string(), "true".to_string())]);
+
+        assert_eq!(id_of(&json!({"id": 42})).ok(), Some(42));
+        assert!(matches!(id_of(&json!({})), Err(Error::Other(_))));
+        Ok(())
+    }
 }

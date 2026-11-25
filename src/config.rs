@@ -687,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_through_toml() {
+    fn round_trips_through_toml() -> Result<()> {
         let mut config = Config::default();
         config.put_site(
             "a.com",
@@ -697,11 +697,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        let dir = tempfile::tempdir().ok();
-        let Some(dir) = dir else { return };
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("config.toml");
-        assert!(config.save_to(&path).is_ok());
-        assert_eq!(Config::load_from(&path).ok(), Some(config));
+        config.save_to(&path)?;
+        assert_eq!(Config::load_from(&path)?, config);
+        Ok(())
     }
 
     fn aliased(key: &str, aliases: &[&str]) -> SiteConfig {
@@ -720,14 +720,16 @@ mod tests {
     }
 
     #[test]
-    fn loads_a_config_written_before_aliases() {
+    fn loads_a_config_written_before_aliases() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
         let raw = "default_site = \"example.realgeeks.com\"\n\n[sites.\"example.realgeeks.com\"]\napi_key = \"rg_live_old\"\nscopes = [\"blog:write\"]\n";
-        let config: Config = toml::from_str(raw).unwrap_or_default();
+        let config: Config = toml::from_str(raw)?;
         let site = config.site("example.realgeeks.com");
         assert_eq!(site.map(|s| s.api_key.as_str()), Some("rg_live_old"));
         assert_eq!(site.map(|s| s.aliases.len()), Some(0));
-        let saved = toml::to_string_pretty(&config).unwrap_or_default();
+        let saved = toml::to_string_pretty(&config)?;
         assert!(!saved.contains("aliases"), "{saved}");
+        Ok(())
     }
 
     #[test]
@@ -838,5 +840,78 @@ mod tests {
             aliases_from_me(&serde_json::json!({}), "a.com").as_slice(),
             []
         ));
+    }
+
+    #[test]
+    fn resolve_target_accepts_base_url_without_site_and_rejects_invalid_urls() -> Result<()> {
+        let target = resolve_target(
+            &Config::default(),
+            &Overrides {
+                site: None,
+                api_key: Some("rg_live_dev".into()),
+                base_url: Some("http://127.0.0.1:8000/".into()),
+            },
+        )?;
+        assert_eq!(target.domain, "127.0.0.1:8000");
+        assert_eq!(target.base_url, "http://127.0.0.1:8000");
+        assert_eq!(target.api_key.as_deref(), Some("rg_live_dev"));
+
+        assert!(matches!(
+            check_transport("not a url"),
+            Err(Error::Config(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn load_and_save_report_io_and_toml_errors() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let bad = dir.path().join("bad.toml");
+        fs::write(&bad, "default_site = [unclosed")?;
+        assert!(matches!(
+            Config::load_from(&bad),
+            Err(Error::Config(m)) if m.contains("cannot parse")
+        ));
+
+        // Reading a directory fails with a Config IO error
+        assert!(matches!(
+            Config::load_from(dir.path()),
+            Err(Error::Config(m)) if m.contains("cannot read")
+        ));
+
+        // Saving under a path whose parent is an existing file fails cleanly
+        let blocker = dir.path().join("file");
+        fs::write(&blocker, "x")?;
+        assert!(matches!(
+            Config::default().save_to(&blocker.join("config.toml")),
+            Err(Error::Config(m)) if m.contains("cannot create")
+        ));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tighten_ignores_symlinks_and_migrate_falls_back_when_rename_fails() -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let target = dir.path().join("target");
+        fs::write(&target, "secret")?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644))?;
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        assert_eq!(tighten_one(&link, 0o600), None);
+        assert_eq!(fs::metadata(&target)?.permissions().mode() & 0o777, 0o644);
+
+        // Read-only base prevents renaming legacy `realgeeks` -> `geekcli`, so legacy is kept
+        let ro_base = tempfile::tempdir()?;
+        let legacy = ro_base.path().join("realgeeks");
+        fs::create_dir(&legacy)?;
+        fs::write(legacy.join("config.toml"), "default_site = \"a.com\"\n")?;
+        fs::set_permissions(ro_base.path(), fs::Permissions::from_mode(0o555))?;
+        let chosen = migrate_legacy_dir(ro_base.path());
+        fs::set_permissions(ro_base.path(), fs::Permissions::from_mode(0o755))?;
+        assert_eq!(chosen, legacy);
+        Ok(())
     }
 }
