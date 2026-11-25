@@ -195,6 +195,30 @@ pub fn run(ctx: &Context, cmd: SearchCommand) -> Result<()> {
 
 // ---------------------------------------------------------------- criteria
 
+/// Whether `prefix` looks like a bare `host` or `host:port` (domain with a dot,
+/// `localhost`, or an IPv4/IPv6 literal) with no path, query, fragment, or userinfo.
+fn looks_like_host(prefix: &str) -> bool {
+    let Ok(url) = url::Url::parse(&format!("https://{prefix}")) else {
+        return false;
+    };
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) => true,
+        Some(url::Host::Domain(d)) => {
+            d.eq_ignore_ascii_case("localhost")
+                || (d.contains('.') && d.split('.').all(|label| !label.is_empty()))
+        }
+        None => false,
+    }
+}
+
 /// Turn CLI items into a query. Accepts `key=value` items and, as a
 /// convenience, a whole query string or URL copied from the site.
 pub fn parse_criteria(items: &[String]) -> Result<Query> {
@@ -204,30 +228,71 @@ pub fn parse_criteria(items: &[String]) -> Result<Query> {
         if item.is_empty() {
             continue;
         }
-        let looks_like_url = item.starts_with('?')
-            || item.starts_with("http://")
-            || item.starts_with("https://")
-            || (item.starts_with('/') && item.contains('?'))
-            || (item.contains('&') && item.contains('='));
-        if looks_like_url {
-            let qs = match item.find('?') {
-                Some(idx) => &item[idx + 1..],
-                None => item,
+        let before_frag = item.split('#').next().unwrap_or_default();
+        let starts_with_scheme = item
+            .get(..7)
+            .is_some_and(|p| p.eq_ignore_ascii_case("http://"))
+            || item
+                .get(..8)
+                .is_some_and(|p| p.eq_ignore_ascii_case("https://"));
+        let bare_parts: Vec<&str> = before_frag.split('&').filter(|s| !s.is_empty()).collect();
+        let is_bare_query = !starts_with_scheme
+            && bare_parts.len() >= 2
+            && bare_parts.iter().all(|s| {
+                s.split_once('=')
+                    .is_some_and(|(k, _)| !k.is_empty() && !k.chars().any(char::is_whitespace))
+            });
+        let schemeless_url_qs = if starts_with_scheme {
+            None
+        } else {
+            before_frag.split_once('?').and_then(|(prefix, rest)| {
+                let is_url_prefix = prefix.is_empty()
+                    || prefix.starts_with('/')
+                    || (!prefix.contains('=')
+                        && !prefix.chars().any(char::is_whitespace)
+                        && (prefix.contains('/') || looks_like_host(prefix)));
+                is_url_prefix.then_some(rest)
+            })
+        };
+        let qs = if starts_with_scheme {
+            let Some((_, qs)) = before_frag.split_once('?') else {
+                return Err(Error::Usage(format!(
+                    "URL '{item}' has no query string criteria"
+                )));
             };
-            let qs = qs.split('#').next().unwrap_or_default();
+            Some(qs)
+        } else if let Some(rest) = schemeless_url_qs {
+            Some(rest)
+        } else if is_bare_query {
+            Some(before_frag)
+        } else {
+            None
+        };
+        if let Some(qs) = qs {
             for (k, v) in url::form_urlencoded::parse(qs.as_bytes()) {
-                if !k.is_empty() {
-                    query.push((k.to_string(), v.to_string()));
+                if k.is_empty() {
+                    return Err(Error::Usage(format!(
+                        "'{item}' has a criterion with an empty key (`={v}`); every value needs a field name"
+                    )));
                 }
+                query.push((k.to_string(), v.to_string()));
             }
             continue;
         }
+        // one pair with a stray `&` copied along (`city=Miami&`, `&city=Miami`)
+        let item = item.trim_matches('&').trim();
         let Some((k, v)) = item.split_once('=') else {
             return Err(Error::Usage(format!(
                 "expected key=value, got '{item}' (run `geekcli search fields` for the field names)"
             )));
         };
-        query.push((k.trim().to_string(), v.trim().to_string()));
+        let k = k.trim();
+        if k.is_empty() {
+            return Err(Error::Usage(format!(
+                "expected key=value with a non-empty key, got '{item}' (run `geekcli search fields` for the field names)"
+            )));
+        }
+        query.push((k.to_string(), v.trim().to_string()));
     }
     if query.is_empty() {
         return Err(Error::Usage("no criteria given".into()));
@@ -1515,5 +1580,165 @@ mod tests {
         assert!(is_numeric_list(&list(&["all", "100000", "1,000,000"])));
         assert!(!is_numeric_list(&list(&["all"])));
         assert!(!is_numeric_list(&list(&["Miami", "33458"])));
+    }
+    #[test]
+    fn parse_criteria_preserves_ampersand_in_values() {
+        let q = parse_criteria(&["subdivision=Town & Country".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("subdivision".to_string(), "Town & Country".to_string())]
+        );
+        let q = parse_criteria(&["features=55+ & Pool".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("features".to_string(), "55+ & Pool".to_string())]);
+        let q = parse_criteria(&["city=Miami&type=res".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string())
+            ]
+        );
+        let q =
+            parse_criteria(&["HTTPS://www.example.com/search/results/?city=Miami&type=res".into()])
+                .unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_criteria_rejects_urls_without_query_string() {
+        for bad in [
+            "https://www.example.com/search/results/a/",
+            "HTTP://www.example.com/search/results/a/",
+            "https://www.example.com/search/results/a/#?fake=1",
+        ] {
+            assert!(
+                matches!(parse_criteria(&[bad.into()]), Err(Error::Usage(_))),
+                "expected usage error for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_criteria_rejects_empty_keys() {
+        for bad in [
+            "=Miami",
+            "=",
+            "   =Miami",
+            // inside a pasted URL or query string too, not silently dropped
+            "?=Miami&city=X",
+            "https://www.example.com/search/results/?=Miami&city=X",
+        ] {
+            assert!(
+                matches!(parse_criteria(&[bad.into()]), Err(Error::Usage(_))),
+                "expected usage error for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_criteria_handles_schemeless_urls_and_preserves_question_marks_in_values() {
+        let q = parse_criteria(&["www.example.com/search/results/?city=Miami&type=res".into()])
+            .unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["www.example.com/search/results/?city=Miami".into()])
+            .unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["www.example.com/search/results/?city=Key+Biscayne#top".into()])
+            .unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Key Biscayne".to_string())]);
+        let q = parse_criteria(&["note=what?".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("note".to_string(), "what?".to_string())]);
+        let q = parse_criteria(&["url=https://a.com/x?y=1".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("url".to_string(), "https://a.com/x?y=1".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_criteria_handles_pathless_schemeless_urls_and_negatives() {
+        let q = parse_criteria(&["www.example.com?city=Miami&type=res".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["www.example.com?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q =
+            parse_criteria(&["example.com:8080?city=Key+Biscayne#top".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Key Biscayne".to_string())]);
+        let q = parse_criteria(&["localhost:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["127.0.0.1:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["[::1]:8000?city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+
+        // Preservation / negative cases
+        let q = parse_criteria(&["note=what?".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("note".to_string(), "what?".to_string())]);
+        let q = parse_criteria(&["url=https://a.com/x?y=1".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("url".to_string(), "https://a.com/x?y=1".to_string())]
+        );
+        let q = parse_criteria(&["subdivision=Town & Country".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![("subdivision".to_string(), "Town & Country".to_string())]
+        );
+        let q = parse_criteria(&["foo?bar=1".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("foo?bar".to_string(), "1".to_string())]);
+
+        // Empty query string after `?` on a host-only prefix yields Usage("no criteria given")
+        assert!(matches!(
+            parse_criteria(&["www.example.com?".into()]),
+            Err(Error::Usage(ref msg)) if msg == "no criteria given"
+        ));
+    }
+
+    #[test]
+    fn parse_criteria_handles_fragments_and_trailing_ampersand() {
+        let q = parse_criteria(&["city=Miami&type=res#a&b".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
+        let q = parse_criteria(&["address=Suite #1&b=2".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("address".to_string(), "Suite #1&b=2".to_string())]);
+        // A stray leading/trailing `&` on one pair is dropped; the value
+        // stays literal (`+` is not decoded to a space).
+        let q = parse_criteria(&["features=55+&".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("features".to_string(), "55+".to_string())]);
+        let q = parse_criteria(&["city=Miami&".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["&city=Miami".into()]).unwrap_or_default();
+        assert_eq!(q, vec![("city".to_string(), "Miami".to_string())]);
+        let q = parse_criteria(&["city=Miami&type=res&".into()]).unwrap_or_default();
+        assert_eq!(
+            q,
+            vec![
+                ("city".to_string(), "Miami".to_string()),
+                ("type".to_string(), "res".to_string()),
+            ]
+        );
     }
 }
