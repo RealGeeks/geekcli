@@ -232,3 +232,165 @@ fn login_refuses_to_follow_a_redirect_to_another_host() {
 
     assert!(err.to_string().contains("not the same site"), "{err}");
 }
+
+#[test]
+fn browser_login_print_url_mode_and_callback_edge_cases() {
+    let mut server = Server::new();
+    // The CLI binds port 0 and registers the port the OS gave it; the start
+    // mock hands that port to the callback thread, so no port is guessed.
+    let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
+    let approve = format!("{}/approve/", server.url());
+    server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(201)
+        .with_body_from_request(move |request| {
+            let body: serde_json::Value = serde_json::from_slice(request.body().unwrap()).unwrap();
+            let port = u16::try_from(body["port"].as_u64().unwrap()).unwrap();
+            port_tx.send(port).unwrap();
+            format!(r#"{{"request_id":"req-print","authorize_url":"{approve}","expires_in":5}}"#)
+                .into()
+        })
+        .create();
+    let token = server
+        .mock("POST", "/api/v3/auth/cli/token/")
+        .match_body(Matcher::PartialJson(json!({ "code": "final-code" })))
+        .with_status(201)
+        .with_body(r#"{"api_key":"rg_live_from_login"}"#)
+        .create();
+
+    let req = request("state-print");
+
+    let browser = thread::spawn(move || {
+        // the listener is bound before the start request is sent
+        let port = port_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        // non-callback path gets 404 and does not end login
+        let fav = reqwest::blocking::get(format!("http://127.0.0.1:{port}/favicon.ico")).unwrap();
+        assert_eq!(fav.status().as_u16(), 404);
+        // callback with matching state but empty code gets 400 and does not end login
+        let empty_code = reqwest::blocking::get(format!(
+            "http://127.0.0.1:{port}/callback?state=state-print&code="
+        ))
+        .unwrap();
+        assert_eq!(empty_code.status().as_u16(), 400);
+        // real approval completes the login
+        browser_callback(port, "code=final-code&state=state-print");
+    });
+
+    let anon = anon_client(&server.url());
+    let result = browser::login(&anon, &req, false).unwrap();
+    browser.join().unwrap();
+    assert_eq!(result["api_key"], "rg_live_from_login");
+    token.assert();
+}
+
+#[test]
+fn browser_login_reports_non_deny_error_expiry_occupied_port_and_missing_fields() {
+    // non-access_denied error from callback
+    let mut server = Server::new();
+    server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(201)
+        .with_body(format!(
+            r#"{{"request_id":"req-err","authorize_url":"{}/a/","expires_in":600}}"#,
+            server.url()
+        ))
+        .create();
+    let anon = anon_client(&server.url());
+    let pending = browser::start(&anon, &request("state-err")).unwrap();
+    let port = pending.port();
+    let browser = thread::spawn(move || {
+        browser_callback(port, "error=temporarily_unavailable&state=state-err");
+    });
+    let err = pending.wait_and_redeem(&anon).unwrap_err();
+    browser.join().unwrap();
+    assert!(err.to_string().contains("temporarily_unavailable"), "{err}");
+
+    // expires_in: 0 expires immediately
+    let mut exp_server = Server::new();
+    exp_server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(201)
+        .with_body(format!(
+            r#"{{"request_id":"req-exp","authorize_url":"{}/a/","expires_in":0}}"#,
+            exp_server.url()
+        ))
+        .create();
+    let exp_anon = anon_client(&exp_server.url());
+    let pending = browser::start(&exp_anon, &request("state-exp")).unwrap();
+    let err = pending.wait_and_redeem(&exp_anon).unwrap_err();
+    assert!(err.to_string().contains("expired"), "{err}");
+
+    // occupied loopback port fails before contacting the server
+    let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut occupied_req = request("state-busy");
+    occupied_req.port = Some(busy.local_addr().unwrap().port());
+    let err = browser::start(&anon, &occupied_req).unwrap_err();
+    assert!(
+        err.to_string().contains("cannot open a local port"),
+        "{err}"
+    );
+    drop(busy);
+
+    // start response missing request_id or authorize_url
+    let mut bad_server = Server::new();
+    bad_server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(201)
+        .with_body(r#"{"authorize_url":"http://127.0.0.1/a/"}"#)
+        .expect(1)
+        .create();
+    bad_server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(201)
+        .with_body(r#"{"request_id":"r1"}"#)
+        .expect(1)
+        .create();
+    let bad_anon = anon_client(&bad_server.url());
+    assert!(browser::start(&bad_anon, &request("s1"))
+        .unwrap_err()
+        .to_string()
+        .contains("request_id"));
+    assert!(browser::start(&bad_anon, &request("s2"))
+        .unwrap_err()
+        .to_string()
+        .contains("authorize_url"));
+}
+
+#[test]
+fn login_stops_on_too_many_redirects_or_redirect_without_location() {
+    // 302 without Location header returns the error directly
+    let mut server = Server::new();
+    server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(302)
+        .with_body(r#"{"error":{"code":"redirect_broken","message":"no location"}}"#)
+        .create();
+    let target = Target {
+        domain: "www.test.local".into(),
+        base_url: server.url(),
+        api_key: None,
+    };
+    let verbose_anon = Client::new(&target, 0, true).unwrap();
+    let err = browser::start(&verbose_anon, &request("s1")).unwrap_err();
+    assert!(err.to_string().contains("unknown location"), "{err}");
+
+    // Infinite redirect loop stops after MAX_REDIRECTS
+    let mut loop_server = Server::new();
+    loop_server
+        .mock("POST", "/api/v3/auth/cli/start/")
+        .with_status(301)
+        .with_header(
+            "location",
+            &format!("{}/api/v3/auth/cli/start/", loop_server.url()),
+        )
+        .expect(6)
+        .create();
+    let loop_target = Target {
+        domain: "www.test.local".into(),
+        base_url: loop_server.url(),
+        api_key: None,
+    };
+    let loop_anon = Client::new(&loop_target, 0, true).unwrap();
+    let err = browser::start(&loop_anon, &request("s2")).unwrap_err();
+    assert!(err.to_string().contains("too many redirects"), "{err}");
+}

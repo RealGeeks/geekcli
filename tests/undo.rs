@@ -3,20 +3,16 @@
 //! `files versions|deleted|restore`, against a mock site.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Server, ServerGuard};
 use predicates::prelude::*;
 use serde_json::{json, Value};
 
 fn cmd(server: &ServerGuard, dir: &tempfile::TempDir) -> Command {
-    let mut c = Command::cargo_bin("geekcli").unwrap();
-    c.env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("GEEKCLI_SITE", "www.test.local")
+    let mut c = common::geekcli();
+    c.env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_API_KEY", "rg_live_k")
         .env("GEEKCLI_BASE_URL", server.url())
         .env("GEEKCLI_CONFIG_DIR", dir.path());
@@ -243,6 +239,17 @@ fn featured_revisions_revision_and_revert_by_title() {
     let table = stdout(&table);
     assert!(table.contains("1 entry: Riverside"), "{table}");
     assert!(table.contains("Our Neighborhoods"), "{table}");
+
+    // a non-revertible revision says so on stderr in table mode
+    server
+        .mock("GET", "/api/v3/content/featured-pages/3/revisions/640/")
+        .with_body(r#"{"id":640,"action":"created","at":"t","by":{"name":"Riley Chen"},"revertible":false,"preview":{}}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["-o", "table", "featured", "revision", "3", "640"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("not revertible"));
 
     let revert = server
         .mock(

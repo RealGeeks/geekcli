@@ -279,17 +279,29 @@ fn scopes(args: &LoginArgs) -> Vec<String> {
 }
 
 fn default_key_name() -> String {
-    let host = std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| std::env::var("COMPUTERNAME").ok())
-        .or_else(|| {
+    default_key_name_from(
+        std::env::var("HOSTNAME").ok(),
+        std::env::var("COMPUTERNAME").ok(),
+        || {
             std::process::Command::new("hostname")
                 .output()
                 .ok()
                 .and_then(|o| String::from_utf8(o.stdout).ok())
                 .map(|s| s.trim().to_string())
-        })
-        .filter(|h| !h.is_empty())
+        },
+    )
+}
+
+fn default_key_name_from(
+    hostname: Option<String>,
+    computername: Option<String>,
+    fallback_cmd: impl FnOnce() -> Option<String>,
+) -> String {
+    let set = |h: &String| !h.is_empty();
+    let host = hostname
+        .filter(set)
+        .or_else(|| computername.filter(set))
+        .or_else(|| fallback_cmd().filter(set))
         .unwrap_or_else(|| "unknown host".to_string());
     let name = format!("Real Geeks CLI on {host}");
     name.chars().take(100).collect()
@@ -315,6 +327,10 @@ fn logout(env: &mut AuthEnv<'_>) -> Result<()> {
 }
 
 fn sites(env: &AuthEnv<'_>) -> Result<()> {
+    sites_for(env, io::stdout().is_terminal())
+}
+
+fn sites_for(env: &AuthEnv<'_>, is_tty: bool) -> Result<()> {
     let rows: Vec<Value> = env
         .config
         .sites
@@ -332,7 +348,7 @@ fn sites(env: &AuthEnv<'_>) -> Result<()> {
             })
         })
         .collect();
-    if rows.is_empty() && !io::stdout().is_terminal() {
+    if rows.is_empty() && !is_tty {
         return env.printer.list(&rows, None, SITE_COLUMNS);
     }
     if rows.is_empty() {
@@ -400,4 +416,210 @@ fn aliases_from_me(me: &Value, key: &str, verbose: bool) -> Vec<String> {
 pub fn key_prefix(key: &str) -> String {
     let shown: String = key.chars().take(16).collect();
     format!("{shown}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_key_name_prefers_env_falls_back_and_truncates() {
+        assert_eq!(
+            default_key_name_from(Some("laptop".into()), None, || None),
+            "Real Geeks CLI on laptop"
+        );
+        assert_eq!(
+            default_key_name_from(None, Some("WINBOX".into()), || None),
+            "Real Geeks CLI on WINBOX"
+        );
+        assert_eq!(
+            default_key_name_from(None, None, || Some("from-cmd".into())),
+            "Real Geeks CLI on from-cmd"
+        );
+        assert_eq!(
+            default_key_name_from(None, None, || Some(String::new())),
+            "Real Geeks CLI on unknown host"
+        );
+        // an empty HOSTNAME falls through to the next source
+        assert_eq!(
+            default_key_name_from(Some(String::new()), Some("WINBOX".into()), || None),
+            "Real Geeks CLI on WINBOX"
+        );
+        assert_eq!(
+            default_key_name_from(Some(String::new()), None, || Some("laptop".into())),
+            "Real Geeks CLI on laptop"
+        );
+        let long = default_key_name_from(Some("a".repeat(120)), None, || None);
+        assert_eq!(long.chars().count(), 100);
+    }
+
+    #[test]
+    fn status_surfaces_refresh_hint_and_login_builds_https_base_url() {
+        let mut cfg = Config::default();
+        cfg.put_site(
+            "old.example.com",
+            SiteConfig {
+                api_key: "rg_live_old".into(),
+                base_url: None,
+                key_name: None,
+                scopes: vec![],
+                expires_at: None,
+                aliases: vec![],
+            },
+        );
+        let overrides = Overrides {
+            site: Some("bad domain".into()),
+            api_key: Some("rg_live_k".into()),
+            base_url: None,
+        };
+        let mut env = AuthEnv {
+            config: &mut cfg,
+            overrides: &overrides,
+            printer: Printer::new(Some(Format::Json), false),
+            max_retries: 0,
+            verbose: false,
+        };
+        // login without --base-url constructs https://{domain} before transport validation
+        let login_err = run(
+            &mut env,
+            AuthCommand {
+                command: AuthSub::Login(LoginArgs {
+                    api_key: Some("rg_live_k".into()),
+                    api_key_stdin: false,
+                    name: None,
+                    scopes: None,
+                    print_url: false,
+                    port: None,
+                }),
+            },
+        );
+        assert!(matches!(login_err, Err(Error::Config(_))));
+
+        // auth status on an unauthorized site calls with_refresh_hint
+        let mut server = mockito::Server::new();
+        server
+            .mock("GET", "/api/v3/me/")
+            .with_status(401)
+            .with_body(r#"{"error":{"code":"invalid_token","message":"nope"}}"#)
+            .create();
+        let status_overrides = Overrides {
+            site: Some("old.example.com".into()),
+            api_key: Some("rg_live_old".into()),
+            base_url: Some(server.url()),
+        };
+        let mut status_env = AuthEnv {
+            config: &mut cfg,
+            overrides: &status_overrides,
+            printer: Printer::new(Some(Format::Json), false),
+            max_retries: 0,
+            verbose: false,
+        };
+        let err = run(
+            &mut status_env,
+            AuthCommand {
+                command: AuthSub::Status,
+            },
+        );
+        assert!(matches!(err, Err(Error::Api { status: 401, .. })));
+
+        // Empty config: status & logout fail target resolution; empty TTY sites prints note
+        let mut empty_cfg = Config::default();
+        let no_overrides = Overrides::default();
+        let mut empty_env = AuthEnv {
+            config: &mut empty_cfg,
+            overrides: &no_overrides,
+            printer: Printer::new(Some(Format::Table), false),
+            max_retries: 0,
+            verbose: false,
+        };
+        assert!(matches!(
+            run(
+                &mut empty_env,
+                AuthCommand {
+                    command: AuthSub::Status
+                }
+            ),
+            Err(Error::Config(_))
+        ));
+        assert!(matches!(
+            run(
+                &mut empty_env,
+                AuthCommand {
+                    command: AuthSub::Logout
+                }
+            ),
+            Err(Error::Config(_))
+        ));
+        assert!(sites_for(&empty_env, true).is_ok());
+
+        // auth use with ambiguous alias surfaces Usage error (platform names may alias live domains)
+        let mut dup_cfg = Config::default();
+        for site in ["a.realgeeks.com", "b.realgeeks.com"] {
+            dup_cfg.put_site(
+                site,
+                SiteConfig {
+                    api_key: "rg_live_k".into(),
+                    base_url: None,
+                    key_name: None,
+                    scopes: vec![],
+                    expires_at: None,
+                    aliases: vec!["shared.example.com".into()],
+                },
+            );
+        }
+        let mut dup_env = AuthEnv {
+            config: &mut dup_cfg,
+            overrides: &no_overrides,
+            printer: Printer::new(Some(Format::Table), false),
+            max_retries: 0,
+            verbose: false,
+        };
+        assert!(matches!(
+            run(
+                &mut dup_env,
+                AuthCommand {
+                    command: AuthSub::Use {
+                        site: "shared.example.com".into()
+                    }
+                }
+            ),
+            Err(Error::Usage(_))
+        ));
+
+        // browser login failing at start propagates cleanly
+        let mut fail_server = mockito::Server::new();
+        fail_server
+            .mock("POST", "/api/v3/auth/cli/start/")
+            .with_status(500)
+            .with_body("{}")
+            .create();
+        let fail_overrides = Overrides {
+            site: Some("www.test.local".into()),
+            api_key: None,
+            base_url: Some(fail_server.url()),
+        };
+        let mut fail_env = AuthEnv {
+            config: &mut empty_cfg,
+            overrides: &fail_overrides,
+            printer: Printer::new(Some(Format::Json), false),
+            max_retries: 0,
+            verbose: false,
+        };
+        assert!(matches!(
+            run(
+                &mut fail_env,
+                AuthCommand {
+                    command: AuthSub::Login(LoginArgs {
+                        api_key: None,
+                        api_key_stdin: false,
+                        name: None,
+                        scopes: None,
+                        print_url: true,
+                        port: None,
+                    })
+                }
+            ),
+            Err(Error::Api { status: 500, .. })
+        ));
+    }
 }

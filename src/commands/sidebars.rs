@@ -457,43 +457,54 @@ fn strip_html(text: &str) -> String {
     out
 }
 
+fn sidebar_heading(sidebar: &Value) -> String {
+    // `used_by` holds at most 500 slugs and `used_by_count` the real total;
+    // trust whichever is larger, so neither a stale count nor a missing list
+    // makes a sidebar in use look unused.
+    let pages: &[Value] = sidebar
+        .get("used_by")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice);
+    let count = sidebar
+        .get("used_by_count")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0);
+    let total = count.max(pages.len());
+    let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
+    let used = if total == 0 {
+        String::new()
+    } else if shown.is_empty() {
+        format!("{total} page(s)")
+    } else {
+        let more = total.saturating_sub(shown.len());
+        let tail = if more > 0 {
+            format!(", +{more} more")
+        } else {
+            String::new()
+        };
+        format!("{total} page(s): {}{tail}", shown.join(", "))
+    };
+    format!(
+        "{} (id {}){}{}",
+        cell(&sidebar["name"]),
+        sidebar["id"],
+        if sidebar["special"].as_bool().unwrap_or(false) {
+            ", built-in"
+        } else {
+            ""
+        },
+        if used.is_empty() {
+            String::new()
+        } else {
+            format!(", used by: {used}")
+        }
+    )
+}
+
 fn print_sidebar(ctx: &Context, sidebar: &Value) -> Result<()> {
     if ctx.printer.format == Format::Table {
-        let used = sidebar
-            .get("used_by")
-            .and_then(Value::as_array)
-            .map(|pages| {
-                // `used_by` holds at most 500 slugs; `used_by_count` is the real total
-                let total = sidebar
-                    .get("used_by_count")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| usize::try_from(n).ok())
-                    .unwrap_or(pages.len());
-                let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
-                let more = total.saturating_sub(shown.len());
-                let tail = if more > 0 {
-                    format!(", +{more} more")
-                } else {
-                    String::new()
-                };
-                format!("{total} page(s): {}{tail}", shown.join(", "))
-            })
-            .unwrap_or_default();
-        ctx.printer.note(&format!(
-            "{} (id {}){}{}",
-            cell(&sidebar["name"]),
-            sidebar["id"],
-            if sidebar["special"].as_bool().unwrap_or(false) {
-                ", built-in"
-            } else {
-                ""
-            },
-            if used.is_empty() {
-                String::new()
-            } else {
-                format!(", used by: {used}")
-            }
-        ));
+        ctx.printer.note(&sidebar_heading(sidebar));
         let rows: Vec<Value> = items_of(sidebar)
             .iter()
             .map(|i| {
@@ -572,9 +583,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_links() {
-        let links =
-            parse_links(&["Riverside=/riverside/".into(), "Plain text".into()]).unwrap_or_default();
+    fn parses_links() -> Result<()> {
+        let links = parse_links(&[
+            "  ".into(),
+            "Riverside=/riverside/".into(),
+            "Plain text".into(),
+        ])?;
         assert_eq!(
             links,
             vec![
@@ -583,6 +597,7 @@ mod tests {
             ]
         );
         assert!(parse_links(&["=/x/".into()]).is_err());
+        Ok(())
     }
 
     #[test]
@@ -596,6 +611,93 @@ mod tests {
                 &json!({"type": "links", "header": {"text": "Areas"}, "links": [{"anchor": "a"}]})
             ),
             "Areas: 1 link(s)"
+        );
+        let long = format!("<p>{}</p>", "word ".repeat(30));
+        let clipped = item_summary(&json!({"type": "html", "html": long}));
+        assert!(
+            clipped.ends_with('…') && clipped.chars().count() == 81,
+            "{clipped}"
+        );
+        assert_eq!(
+            item_summary(&json!({"type": "html", "html": "<hr><br>"})),
+            "<hr><br>"
+        );
+        assert_eq!(
+            item_summary(&json!({"type": "links", "links": []})),
+            "(no header): 0 link(s)"
+        );
+    }
+
+    #[test]
+    fn reads_items_json_from_inline_file_and_rejects_bad_shapes() -> Result<()> {
+        let items = read_items_json(r#"[{"type":"html","html":"<p>a</p>"}]"#)?;
+        assert_eq!(items.len(), 1);
+        let wrapped = read_items_json(r#"{"items":[{"type":"html","html":"<p>b</p>"}]}"#)?;
+        assert_eq!(wrapped.len(), 1);
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("items.json");
+        std::fs::write(&path, r#"[{"type":"html","html":"<p>c</p>"}]"#)?;
+        let from_file = read_items_json(&format!("@{}", path.display()))?;
+        assert_eq!(from_file[0]["html"], "<p>c</p>");
+
+        assert!(matches!(
+            read_items_json(r#"{"other":1}"#),
+            Err(Error::Usage(_))
+        ));
+        assert!(matches!(read_items_json("123"), Err(Error::Usage(_))));
+        assert!(matches!(read_items_json("{bad"), Err(Error::Usage(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn formats_sidebar_heading_without_empty_used_by() {
+        assert_eq!(
+            sidebar_heading(&json!({"id": 5, "name": "Custom", "special": false, "used_by": []})),
+            "Custom (id 5)"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({"id": 5, "name": "Custom"})),
+            "Custom (id 5)"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 1,
+                "name": "Area",
+                "special": true,
+                "used_by": ["/a/", "/b/"]
+            })),
+            "Area (id 1), built-in, used by: 2 page(s): /a/, /b/"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 2,
+                "name": "Shared",
+                "used_by": ["a", "b", "c", "d", "e", "f"],
+                "used_by_count": 8
+            })),
+            "Shared (id 2), used by: 8 page(s): a, b, c, d, e, +3 more"
+        );
+        assert_eq!(
+            sidebar_heading(&json!({
+                "id": 3,
+                "name": "CountOnly",
+                "used_by": [],
+                "used_by_count": 4
+            })),
+            "CountOnly (id 3), used by: 4 page(s)"
+        );
+        // a stale count of 0 must not hide pages the list names
+        assert_eq!(
+            sidebar_heading(
+                &json!({"id": 4, "name": "Stale", "used_by": ["/a/"], "used_by_count": 0})
+            ),
+            "Stale (id 4), used by: 1 page(s): /a/"
+        );
+        // the count alone is enough when the list is missing
+        assert_eq!(
+            sidebar_heading(&json!({"id": 6, "name": "NoList", "used_by_count": 3})),
+            "NoList (id 6), used by: 3 page(s)"
         );
     }
 }

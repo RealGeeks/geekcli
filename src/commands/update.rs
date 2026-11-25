@@ -136,8 +136,11 @@ fn env(name: &str) -> Option<String> {
 /// The target triple of the release archive for this machine. Linux is
 /// always the static musl build, whatever this binary was compiled against.
 pub fn release_target() -> Result<String> {
-    let arch = std::env::consts::ARCH;
-    let os = match std::env::consts::OS {
+    release_target_for(std::env::consts::ARCH, std::env::consts::OS)
+}
+
+fn release_target_for(arch: &str, os: &str) -> Result<String> {
+    let suffix = match os {
         "macos" => "apple-darwin",
         "linux" => "unknown-linux-musl",
         "windows" => "pc-windows-msvc",
@@ -147,7 +150,7 @@ pub fn release_target() -> Result<String> {
             )))
         }
     };
-    Ok(format!("{arch}-{os}"))
+    Ok(format!("{arch}-{suffix}"))
 }
 
 /// The archive `release.yml` publishes for a tag and target.
@@ -232,20 +235,37 @@ pub fn run(printer: Printer, args: &UpdateArgs) -> Result<()> {
 /// (`client_too_old`) instead. Failures are silent; this must never break a
 /// command.
 pub fn notify(printer: Printer) {
-    let wanted = printer.format == Format::Table
-        && std::io::stderr().is_terminal()
-        && env("CI").is_none()
-        && env("GEEKCLI_NO_UPDATE_CHECK").is_none();
-    if !wanted {
-        return;
-    }
     let Ok(dir) = config::config_dir() else {
         return;
     };
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    if let Some(version) = newer_release(&dir.join(CHECK_FILE), now, latest_version) {
+    notify_with(
+        printer,
+        std::io::stderr().is_terminal(),
+        env("CI").is_some(),
+        env("GEEKCLI_NO_UPDATE_CHECK").is_some(),
+        &dir,
+        now,
+        latest_version,
+    );
+}
+
+fn notify_with(
+    printer: Printer,
+    is_tty: bool,
+    in_ci: bool,
+    disabled: bool,
+    config_dir: &Path,
+    now: u64,
+    latest: impl FnOnce() -> Option<String>,
+) {
+    let wanted = printer.format == Format::Table && is_tty && !in_ci && !disabled;
+    if !wanted {
+        return;
+    }
+    if let Some(version) = newer_release(&config_dir.join(CHECK_FILE), now, latest) {
         printer.note(&format!(
             "geekcli {version} is available (this is {CURRENT}); run `geekcli update`"
         ));
@@ -276,8 +296,13 @@ fn newer_release(
 
 fn latest_version() -> Option<String> {
     let source = Source::from_env().ok()?;
+    let target = release_target().ok()?;
+    latest_version_from(&source, &target)
+}
+
+fn latest_version_from(source: &Source, target: &str) -> Option<String> {
     let release = source
-        .builder(&release_target().ok()?)
+        .builder(target)
         .timeout(Duration::from_secs(3))
         .build()
         .ok()?
@@ -428,9 +453,28 @@ mod tests {
     }
 
     #[test]
-    fn linux_always_takes_the_static_build() -> Result<()> {
-        let target = release_target()?;
-        assert!(!target.contains("gnu"), "{target}");
+    fn release_targets_map_platforms_and_keep_linux_static() -> Result<()> {
+        assert_eq!(
+            release_target_for("x86_64", "linux")?,
+            "x86_64-unknown-linux-musl"
+        );
+        assert_eq!(
+            release_target_for("aarch64", "linux")?,
+            "aarch64-unknown-linux-musl"
+        );
+        assert_eq!(
+            release_target_for("aarch64", "macos")?,
+            "aarch64-apple-darwin"
+        );
+        assert_eq!(
+            release_target_for("x86_64", "windows")?,
+            "x86_64-pc-windows-msvc"
+        );
+        assert!(matches!(
+            release_target_for("x86_64", "freebsd"),
+            Err(Error::Other(m)) if m.contains("freebsd")
+        ));
+        assert!(!release_target()?.contains("gnu"));
         Ok(())
     }
 
@@ -494,5 +538,126 @@ mod tests {
     fn tags_gain_their_v() {
         assert_eq!(normalize_tag("0.6.0"), "v0.6.0");
         assert_eq!(normalize_tag(" v0.6.0 "), "v0.6.0");
+    }
+
+    #[test]
+    fn source_redirected_reports_repo_and_api_overrides() {
+        let official = Source {
+            owner: "RealGeeks".into(),
+            name: "geekcli".into(),
+            api_url: None,
+            token: None,
+        };
+        assert_eq!(official.redirected(), None);
+
+        let fork = Source {
+            owner: "acme".into(),
+            name: "geekcli".into(),
+            api_url: None,
+            token: None,
+        };
+        assert_eq!(
+            fork.redirected().as_deref(),
+            Some("GEEKCLI_REPO=acme/geekcli")
+        );
+
+        let mirror = Source {
+            owner: "RealGeeks".into(),
+            name: "geekcli".into(),
+            api_url: Some("https://mirror.example".into()),
+            token: None,
+        };
+        assert_eq!(
+            mirror.redirected().as_deref(),
+            Some("GEEKCLI_UPDATE_API_URL=https://mirror.example")
+        );
+
+        let both = Source {
+            owner: "acme".into(),
+            name: "geekcli".into(),
+            api_url: Some("https://mirror.example".into()),
+            token: None,
+        };
+        assert_eq!(
+            both.redirected().as_deref(),
+            Some("GEEKCLI_REPO=acme/geekcli and GEEKCLI_UPDATE_API_URL=https://mirror.example")
+        );
+    }
+
+    #[test]
+    fn failure_maps_update_errors_to_cli_exit_codes() {
+        let rejected = failure(UpdateError::archive_verification_rejected("bad sig"));
+        assert_eq!(rejected.exit_code(), 1);
+        assert!(rejected.to_string().contains("bad sig"));
+
+        let io_err = failure(UpdateError::from(std::io::Error::other("disk full")));
+        assert_eq!(io_err.exit_code(), 1);
+        assert!(io_err.to_string().contains("update failed"));
+    }
+
+    #[test]
+    fn latest_version_from_fetches_latest_and_handles_errors() -> Result<()> {
+        let mut server = mockito::Server::new();
+        let source = Source {
+            owner: "RealGeeks".into(),
+            name: "geekcli".into(),
+            api_url: Some(server.url()),
+            token: None,
+        };
+        let target = release_target()?;
+        let ok = server
+            .mock("GET", "/repos/RealGeeks/geekcli/releases/latest")
+            .with_body(
+                r#"{"tag_name":"v9.9.9","name":"v9.9.9","created_at":"2026-01-01T00:00:00Z","assets":[]}"#,
+            )
+            .create();
+        assert_eq!(
+            latest_version_from(&source, &target).as_deref(),
+            Some("9.9.9")
+        );
+        ok.assert();
+
+        let err = server
+            .mock("GET", "/repos/RealGeeks/geekcli/releases/latest")
+            .with_status(404)
+            .with_body(r#"{"message":"Not Found"}"#)
+            .create();
+        assert_eq!(latest_version_from(&source, &target), None);
+        err.assert();
+        Ok(())
+    }
+
+    #[test]
+    fn notify_with_respects_tty_ci_opt_out_and_table_mode() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let table = Printer::new(Some(Format::Table), false);
+        let json_printer = Printer::new(Some(Format::Json), false);
+        let called = std::cell::Cell::new(0u32);
+        let count_lookup = || {
+            called.set(called.get() + 1);
+            Some("999.0.0".to_string())
+        };
+
+        // Suppressed when not table, not tty, in CI, or opted out
+        notify_with(
+            json_printer,
+            true,
+            false,
+            false,
+            dir.path(),
+            1000,
+            count_lookup,
+        );
+        notify_with(table, false, false, false, dir.path(), 1000, count_lookup);
+        notify_with(table, true, true, false, dir.path(), 1000, count_lookup);
+        notify_with(table, true, false, true, dir.path(), 1000, count_lookup);
+        assert_eq!(called.get(), 0);
+
+        // Runs on interactive table terminal and records stamp so immediate repeat is skipped
+        notify_with(table, true, false, false, dir.path(), 1000, count_lookup);
+        assert_eq!(called.get(), 1);
+        notify_with(table, true, false, false, dir.path(), 1001, count_lookup);
+        assert_eq!(called.get(), 1);
+        Ok(())
     }
 }

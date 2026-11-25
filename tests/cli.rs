@@ -1,6 +1,8 @@
 //! End-to-end tests: run the `geekcli` binary against a mock `/api/v3/`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Server, ServerGuard};
 use predicates::prelude::*;
@@ -21,14 +23,8 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        let mut cmd = Command::cargo_bin("geekcli").unwrap();
-        cmd.env_clear()
-            .env(
-                "SYSTEMROOT",
-                std::env::var("SYSTEMROOT").unwrap_or_default(),
-            )
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("GEEKCLI_SITE", "www.test.local")
+        let mut cmd = common::geekcli();
+        cmd.env("GEEKCLI_SITE", "www.test.local")
             .env("GEEKCLI_API_KEY", KEY)
             .env("GEEKCLI_BASE_URL", self.server.url())
             .env("GEEKCLI_CONFIG_DIR", self.config_dir.path());
@@ -455,7 +451,7 @@ fn pages_delete_with_orphan_flag() {
 }
 
 #[test]
-fn rate_limit_is_retried() {
+fn rate_limit_is_retried_for_seconds_and_http_dates() {
     let mut env = Env::new();
     env.server
         .mock("GET", "/api/v3/content/templates/")
@@ -467,27 +463,6 @@ fn rate_limit_is_retried() {
     // mockito serves mocks in creation order until each is exhausted
     env.server
         .mock("GET", "/api/v3/content/templates/")
-        .with_body(
-            r#"{"results":[{"name":"About Page","description":"","extra_content_areas":[]}]}"#,
-        )
-        .create();
-    // the notice goes to stderr without -v; stdout stays the JSON result
-    let output = env
-        .cmd()
-        .args(["templates", "list"])
-        .assert()
-        .success()
-        .stderr("rate limited; retrying in 0s (attempt 1 of 3)\n")
-        .get_output()
-        .clone();
-    assert_eq!(parse(&output.stdout)["results"][0]["name"], "About Page");
-}
-
-#[test]
-fn retry_after_http_date_in_the_past_retries_at_once() {
-    let mut env = Env::new();
-    env.server
-        .mock("GET", "/api/v3/content/templates/")
         .with_status(429)
         .with_header("retry-after", "Wed, 21 Oct 2015 07:28:00 GMT")
         .with_body(r#"{"error":{"code":"rate_limited","message":"slow down"}}"#)
@@ -495,33 +470,20 @@ fn retry_after_http_date_in_the_past_retries_at_once() {
         .create();
     env.server
         .mock("GET", "/api/v3/content/templates/")
-        .with_body(r#"{"results":[]}"#)
+        .with_body(
+            r#"{"results":[{"name":"About Page","description":"","extra_content_areas":[]}]}"#,
+        )
+        .expect(1)
         .create();
-    env.cmd()
+    // each back-off prints a notice to stderr without -v; stdout stays the JSON result
+    let output = env
+        .cmd()
         .args(["templates", "list", "--max-retries", "2"])
         .assert()
         .success()
-        .stderr("rate limited; retrying in 0s (attempt 1 of 2)\n");
-}
-
-#[test]
-fn low_rate_limit_remaining_warns_once() {
-    let mut env = Env::new();
-    let list = r#"{"results":[{"name":"About Page","description":"","extra_content_areas":[]}]}"#;
-    env.server
-        .mock("GET", "/api/v3/content/templates/")
-        .with_header("x-ratelimit-limit", "600")
-        .with_header("x-ratelimit-remaining", "12")
-        .with_header("x-ratelimit-reset", "900")
-        .with_body(list)
-        .create();
-    let output = env
-        .cmd()
-        .args(["templates", "list"])
-        .assert()
-        .success()
         .stderr(
-            "warning: rate limit nearly used: 12 of 600 requests left in this window (resets in 900s)\n",
+            "rate limited; retrying in 0s (attempt 1 of 2)\n\
+             rate limited; retrying in 0s (attempt 2 of 2)\n",
         )
         .get_output()
         .clone();
@@ -529,19 +491,60 @@ fn low_rate_limit_remaining_warns_once() {
 }
 
 #[test]
-fn rate_limit_headers_with_room_say_nothing() {
+fn low_rate_limit_remaining_warns_once_across_requests() {
     let mut env = Env::new();
-    env.server
-        .mock("GET", "/api/v3/content/templates/")
+    let base = env.server.url();
+    // page 1 has plenty of room (60/600): no warning. Matched on the exact
+    // query, so it cannot also answer the page 2 and 3 requests.
+    let page1 = env
+        .server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_query(Matcher::Exact("page_size=100".into()))
+        .expect(1)
         .with_header("x-ratelimit-limit", "600")
         .with_header("x-ratelimit-remaining", "60")
-        .with_body(r#"{"results":[]}"#)
+        .with_body(format!(
+            r#"{{"results":[{{"id":1}}],"pagination":{{"next":"{base}/api/v3/blog/categories/?page=2&page_size=100"}}}}"#
+        ))
         .create();
-    env.cmd()
-        .args(["templates", "list"])
+    // page 2 drops below 10%: warns once
+    env.server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "2".into()),
+            Matcher::UrlEncoded("page_size".into(), "100".into()),
+        ]))
+        .with_header("x-ratelimit-limit", "600")
+        .with_header("x-ratelimit-remaining", "12")
+        .with_header("x-ratelimit-reset", "900")
+        .with_body(format!(
+            r#"{{"results":[{{"id":2}}],"pagination":{{"next":"{base}/api/v3/blog/categories/?page=3&page_size=100"}}}}"#
+        ))
+        .create();
+    // page 3 is still low: must not repeat the warning
+    env.server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "3".into()),
+            Matcher::UrlEncoded("page_size".into(), "100".into()),
+        ]))
+        .with_header("x-ratelimit-limit", "600")
+        .with_header("x-ratelimit-remaining", "11")
+        .with_header("x-ratelimit-reset", "899")
+        .with_body(r#"{"results":[{"id":3}],"pagination":{"next":null}}"#)
+        .create();
+    let output = env
+        .cmd()
+        .args(["categories", "list", "--all", "-q"])
         .assert()
         .success()
-        .stderr("");
+        .stderr(
+            "warning: rate limit nearly used: 12 of 600 requests left in this window (resets in 900s)\n",
+        )
+        .get_output()
+        .clone();
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n2\n3\n");
+    page1.assert();
 }
 
 #[test]
@@ -569,21 +572,113 @@ fn raw_api_call() {
         .mock("PATCH", "/api/v3/blog/posts/3/")
         .match_query(Matcher::UrlEncoded("x".into(), "1".into()))
         .match_body(Matcher::Json(json!({ "title": "t" })))
+        .with_header("location", "/api/v3/blog/posts/3/")
         .with_body(r#"{"id":3}"#)
         .create();
     env.cmd()
         .args([
+            "-o",
+            "table",
             "api",
             "patch",
             "blog/posts/3/",
             "-p",
             "x=1",
             "-d",
-            r#"{"title":"t"}"#,
+            "-",
         ])
+        .write_stdin(r#"{"title":"t"}"#)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Location: /api/v3/blog/posts/3/"));
+    mock.assert();
+
+    // invalid method and malformed --param fail as usage errors before any request
+    env.cmd()
+        .args(["api", "BAD METHOD", "me/"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown HTTP method"));
+    env.cmd()
+        .args(["api", "GET", "me/", "-p", "no-equals"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("key=value"));
+}
+
+#[test]
+fn xdg_config_home_and_jsonl_error_contract() {
+    let mut env = Env::new();
+    let xdg = tempfile::tempdir().unwrap();
+    let geekcli_dir = xdg.path().join("geekcli");
+    std::fs::create_dir_all(&geekcli_dir).unwrap();
+    std::fs::write(
+        geekcli_dir.join("config.toml"),
+        format!(
+            "default_site = \"www.test.local\"\n\n[sites.\"www.test.local\"]\napi_key = \"rg_live_xdg\"\nbase_url = \"{}\"\n",
+            env.server.url()
+        ),
+    )
+    .unwrap();
+    let me = env
+        .server
+        .mock("GET", "/api/v3/me/")
+        .match_header("authorization", "Bearer rg_live_xdg")
+        .with_body(r#"{"site":{"domain":"www.test.local"}}"#)
+        .create();
+    env.cmd()
+        .env_remove("GEEKCLI_CONFIG_DIR")
+        .env_remove("GEEKCLI_API_KEY")
+        .env_remove("GEEKCLI_SITE")
+        .env_remove("GEEKCLI_BASE_URL")
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .arg("me")
         .assert()
         .success();
-    mock.assert();
+    me.assert();
+
+    // -o jsonl emits a JSON error document on stderr (never panics or prints table text)
+    env.server
+        .mock("GET", "/api/v3/blog/posts/99/")
+        .with_status(404)
+        .with_body(r#"{"error":{"code":"not_found","message":"missing"}}"#)
+        .create();
+    let out = env
+        .cmd()
+        .args(["-o", "jsonl", "posts", "get", "99"])
+        .assert()
+        .code(4)
+        .get_output()
+        .stderr
+        .clone();
+    assert_eq!(parse(&out)["error"]["code"], "not_found");
+
+    // same-origin redirect loop stops cleanly with network error (exit 8)
+    env.server
+        .mock("GET", "/api/v3/loop/")
+        .with_status(302)
+        .with_header("location", "/api/v3/loop/")
+        .create();
+    env.cmd()
+        .args(["api", "GET", "loop/"])
+        .assert()
+        .code(8)
+        .stderr(predicate::str::contains("too many redirects"));
+
+    // non-JSON 200 body is wrapped under {"raw": ...}
+    env.server
+        .mock("GET", "/api/v3/plain/")
+        .with_body("hello plain")
+        .create();
+    let out = env
+        .cmd()
+        .args(["api", "GET", "plain/"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["raw"], "hello plain");
 }
 
 #[test]
@@ -663,19 +758,13 @@ fn login_rejects_bad_key_without_storing() {
 }
 
 #[test]
-fn guide_and_help_are_available() {
+fn completions_generates_shell_script() {
     let env = Env::new();
     env.cmd()
-        .arg("guide")
+        .args(["completions", "zsh"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Exit codes"));
-    env.cmd()
-        .args(["posts", "create", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--body-file"));
-    env.cmd().args(["completions", "zsh"]).assert().success();
+        .stdout(predicate::str::contains("#compdef geekcli"));
 }
 
 /// `--help` as (heading, flags) pairs, in the order printed.
@@ -765,6 +854,12 @@ fn help_groups_required_on_create_flags_first() {
 #[test]
 fn guide_topics_and_sections() {
     let env = Env::new();
+    // bare `guide` prints the full document
+    env.cmd().arg("guide").assert().success().stdout(
+        predicate::str::contains("Writing content that renders")
+            .and(predicate::str::contains("Exit codes")),
+    );
+
     let out = env
         .cmd()
         .args(["guide", "--list"])
@@ -793,29 +888,61 @@ fn guide_topics_and_sections() {
         "guide html printed more than one section"
     );
 
+    // multi-match topic prints sections separated by a blank line
     let out = env
         .cmd()
-        .args(["guide", "fonts"])
+        .args(["guide", "page"])
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
-    let fonts = String::from_utf8_lossy(&out);
-    assert!(fonts.contains("HEADING_FONT"), "{fonts}");
-    assert!(fonts.contains("BODY_FONT"), "{fonts}");
+    let multi = String::from_utf8_lossy(&out);
+    // several sections, each later heading preceded by a blank line
+    assert!(multi.starts_with("## "), "{multi}");
+    let later = multi.matches("\n## ").count();
+    assert!(later >= 1, "{multi}");
+    assert_eq!(multi.matches("\n\n## ").count(), later, "{multi}");
 
     env.cmd()
         .args(["guide", "zzz"])
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no guide section matches"));
+}
 
+/// Safety notes agents rely on live in `--help` and the guide (AGENTS.md:
+/// "write a lesson down everywhere an agent would meet it"); keep them there.
+#[test]
+fn help_and_guide_keep_their_safety_notes() {
+    let env = Env::new();
+    for sub in ["create", "update"] {
+        env.cmd()
+            .args(["area-pages", sub, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--area-name is display text only"))
+            .stdout(predicate::str::contains("subdivision"))
+            .stdout(predicate::str::contains("search check"));
+    }
     env.cmd()
-        .args(["posts", "create", "--help"])
+        .args(["area-pages", "create", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Windows-1252"));
+        .stdout(predicate::str::contains("public as soon as it is created"))
+        .stdout(predicate::str::contains("--no-search"));
+    env.cmd()
+        .args(["pages", "update", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("page-heading"))
+        .stdout(predicate::str::contains("BIG_SEARCH_TITLE"));
+    env.cmd()
+        .args(["guide", "fonts"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("HEADING_FONT"))
+        .stdout(predicate::str::contains("BODY_FONT"));
 }
 
 /// `posts create --help` and `guide html` agree on what the sanitizer keeps.
@@ -1403,26 +1530,6 @@ fn area_pages_create_sends_search_criteria() {
         .code(2);
 }
 
-#[test]
-fn area_pages_help_explains_area_name_and_publishing() {
-    let env = Env::new();
-    for sub in ["create", "update"] {
-        env.cmd()
-            .args(["area-pages", sub, "--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("--area-name is display text only"))
-            .stdout(predicate::str::contains("subdivision"))
-            .stdout(predicate::str::contains("search check"));
-    }
-    env.cmd()
-        .args(["area-pages", "create", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("public as soon as it is created"))
-        .stdout(predicate::str::contains("--no-search"));
-}
-
 /// `geekcli … | head` must not report an internal error when `head` exits
 /// first. The read end is closed before geekcli writes, so every write fails.
 fn run_with_closed_stdout(args: &[&str]) -> std::process::Output {
@@ -1855,14 +1962,743 @@ fn featured_areas_set_takes_attribute_value_pairs() {
 }
 
 #[test]
-fn guide_alfred_topic() {
-    let env = Env::new();
-    env.cmd()
-        .args(["guide", "alfred"])
+fn categories_crud_and_post_create_categories() {
+    let mut env = Env::new();
+    server_categories(&mut env);
+
+    let out = env
+        .cmd()
+        .args(["categories", "get", "1"])
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("The alfred design")
-                .and(predicate::str::contains("items set tile")),
-        );
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["slug"], "news");
+
+    let out = env
+        .cmd()
+        .args(["categories", "get", "news"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["id"], 1);
+
+    let create = env
+        .server
+        .mock("POST", "/api/v3/blog/categories/")
+        .match_body(Matcher::Json(
+            json!({ "name": "Market Updates", "slug": "market-updates" }),
+        ))
+        .with_status(201)
+        .with_body(r#"{"id":2,"name":"Market Updates","slug":"market-updates"}"#)
+        .create();
+    env.cmd()
+        .args(["categories", "create", "--name", "Market Updates"])
+        .assert()
+        .success();
+    create.assert();
+
+    env.cmd()
+        .args(["categories", "update", "1"])
+        .assert()
+        .code(2);
+    let update = env
+        .server
+        .mock("PATCH", "/api/v3/blog/categories/1/")
+        .match_body(Matcher::Json(json!({ "name": "Local News" })))
+        .with_body(r#"{"id":1,"name":"Local News","slug":"news"}"#)
+        .create();
+    env.cmd()
+        .args(["categories", "update", "1", "--name", "Local News"])
+        .assert()
+        .success();
+    update.assert();
+
+    let del = env
+        .server
+        .mock("DELETE", "/api/v3/blog/categories/1/")
+        .match_query(Matcher::UrlEncoded("force".into(), "true".into()))
+        .with_status(204)
+        .create();
+    let out = env
+        .cmd()
+        .args(["categories", "delete", "1", "--force", "-y"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["deleted"], true);
+    del.assert();
+
+    // --create-categories creates missing slugs and skips existing ones
+    let ensure_create = env
+        .server
+        .mock("POST", "/api/v3/blog/categories/")
+        .match_body(Matcher::Json(
+            json!({ "name": "New Topic", "slug": "new-topic" }),
+        ))
+        .with_status(201)
+        .with_body(r#"{"id":3,"name":"New Topic","slug":"new-topic"}"#)
+        .create();
+    let post = env
+        .server
+        .mock("POST", "/api/v3/blog/posts/")
+        .match_body(Matcher::PartialJson(json!({
+            "categories": ["news", "new-topic"]
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":10,"slug":"p"}"#)
+        .create();
+    env.cmd()
+        .args([
+            "posts",
+            "create",
+            "--title",
+            "P",
+            "--slug",
+            "p",
+            "--content",
+            "<p>x</p>",
+            "--category",
+            "news,new-topic",
+            "--create-categories",
+        ])
+        .assert()
+        .success();
+    ensure_create.assert();
+    post.assert();
+}
+
+fn server_categories(env: &mut Env) {
+    env.server
+        .mock("GET", "/api/v3/blog/categories/1/")
+        .with_body(r#"{"id":1,"name":"News","slug":"news"}"#)
+        .expect_at_least(1)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "news".into()))
+        .with_body(r#"{"results":[{"id":1,"name":"News","slug":"news"}],"pagination":{}}"#)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/blog/categories/")
+        .match_query(Matcher::UrlEncoded("page_size".into(), "100".into()))
+        .with_body(
+            r#"{"results":[{"id":1,"name":"News","slug":"news"}],"pagination":{"next":null}}"#,
+        )
+        .create();
+}
+
+#[test]
+fn posts_lifecycle_publish_unpublish_update_variants_delete_and_revert() {
+    let mut env = Env::new();
+    let list = env
+        .server
+        .mock("GET", "/api/v3/blog/posts/")
+        .match_query(Matcher::UrlEncoded("status".into(), "draft".into()))
+        .with_body(r#"{"results":[],"pagination":{}}"#)
+        .create();
+    env.cmd()
+        .args(["posts", "list", "--status", "draft"])
+        .assert()
+        .success();
+    list.assert();
+
+    env.cmd()
+        .args([
+            "posts",
+            "create",
+            "--title",
+            "Missing Slug",
+            "--content",
+            "<p>x</p>",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--slug is required"));
+
+    env.server
+        .mock("GET", "/api/v3/blog/posts/9/")
+        .with_body(r#"{"id":9,"title":"Nine","slug":"nine","categories":[{"id":1,"slug":"news"}]}"#)
+        .expect_at_least(3)
+        .create();
+
+    // single-resource quiet (-q) and jsonl (-o jsonl) output formats
+    env.cmd()
+        .args(["posts", "get", "9", "-q"])
+        .assert()
+        .success()
+        .stdout("9\n");
+    let jsonl = env
+        .cmd()
+        .args(["-o", "jsonl", "posts", "get", "9"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let jsonl_str = String::from_utf8_lossy(&jsonl);
+    assert_eq!(jsonl_str.lines().count(), 1, "{jsonl_str}");
+    assert_eq!(parse(jsonl_str.trim().as_bytes())["slug"], "nine");
+
+    // empty update is usage error
+    env.cmd().args(["posts", "update", "9"]).assert().code(2);
+
+    // --clear-categories and --replace (PUT)
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/blog/posts/9/")
+        .match_body(Matcher::Json(json!({ "title": "Full", "categories": [] })))
+        .with_body(r#"{"id":9,"title":"Full"}"#)
+        .create();
+    env.cmd()
+        .args([
+            "posts",
+            "update",
+            "9",
+            "--title",
+            "Full",
+            "--clear-categories",
+            "--replace",
+        ])
+        .assert()
+        .success();
+    put.assert();
+
+    // --add-category deduplicates an existing numeric id and existing slug
+    let dedup = env
+        .server
+        .mock("PATCH", "/api/v3/blog/posts/9/")
+        .match_body(Matcher::Json(json!({ "categories": [1, 2] })))
+        .with_body(r#"{"id":9}"#)
+        .create();
+    env.cmd()
+        .args(["posts", "update", "9", "--add-category", "1,news,2"])
+        .assert()
+        .success();
+    dedup.assert();
+
+    // publish default (sets publish timestamp) and --keep-date (omits publish)
+    let pub_now = env
+        .server
+        .mock("PATCH", "/api/v3/blog/posts/9/")
+        .match_body(Matcher::AllOf(vec![
+            Matcher::PartialJson(json!({ "status": "published" })),
+            Matcher::Regex(r#""publish":"[^"]+""#.into()),
+        ]))
+        .with_body(r#"{"id":9,"state":"published","url":"https://x/blog/nine/"}"#)
+        .create();
+    env.cmd()
+        .args(["-o", "table", "posts", "publish", "9"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Published id 9"));
+    pub_now.assert();
+
+    let pub_keep = env
+        .server
+        .mock("PATCH", "/api/v3/blog/posts/9/")
+        .match_body(Matcher::Json(json!({ "status": "published" })))
+        .with_body(r#"{"id":9,"state":"published"}"#)
+        .create();
+    env.cmd()
+        .args(["posts", "publish", "9", "--keep-date"])
+        .assert()
+        .success();
+    pub_keep.assert();
+
+    let unpub = env
+        .server
+        .mock("PATCH", "/api/v3/blog/posts/9/")
+        .match_body(Matcher::Json(json!({ "status": "draft" })))
+        .with_body(r#"{"id":9,"state":"draft"}"#)
+        .create();
+    env.cmd()
+        .args(["posts", "unpublish", "9"])
+        .assert()
+        .success();
+    unpub.assert();
+
+    let revert = env
+        .server
+        .mock("POST", "/api/v3/blog/posts/9/revisions/512/revert/")
+        .with_body(r#"{"id":9,"slug":"nine"}"#)
+        .create();
+    env.cmd()
+        .args(["-y", "posts", "revert", "9", "512"])
+        .assert()
+        .success();
+    revert.assert();
+
+    let del = env
+        .server
+        .mock("DELETE", "/api/v3/blog/posts/9/")
+        .with_status(204)
+        .create();
+    let out = env
+        .cmd()
+        .args(["posts", "delete", "9", "-y"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["deleted"], true);
+    del.assert();
+}
+
+#[test]
+fn pages_and_area_pages_remaining_subcommands() {
+    let mut env = Env::new();
+    // parent lookup falls back from content/pages/ to content/area-pages/
+    env.server
+        .mock("GET", "/api/v3/content/pages/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "riverside".into()))
+        .with_body(r#"{"results":[],"pagination":{}}"#)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/area-pages/")
+        .match_query(Matcher::UrlEncoded("slug".into(), "riverside".into()))
+        .with_body(r#"{"results":[{"id":23,"slug":"riverside"}],"pagination":{}}"#)
+        .create();
+    let create = env
+        .server
+        .mock("POST", "/api/v3/content/pages/")
+        .match_body(Matcher::Json(json!({
+            "slug": "schools",
+            "anchor_text": "Schools",
+            "parent": 23,
+            "property_display_location": "above",
+            "search": 42,
+            "landscape_image_override": null
+        })))
+        .with_status(201)
+        .with_body(r#"{"id":8,"path":"/riverside/schools/"}"#)
+        .create();
+    env.cmd()
+        .args([
+            "pages",
+            "create",
+            "--slug",
+            "schools",
+            "--anchor-text",
+            "Schools",
+            "--parent",
+            "riverside",
+            "--property-display-location",
+            "above",
+            "--search",
+            "42",
+            "--landscape",
+            "null",
+        ])
+        .assert()
+        .success();
+    create.assert();
+
+    env.cmd()
+        .args([
+            "pages",
+            "create",
+            "--slug",
+            "x",
+            "--anchor-text",
+            "X",
+            "--area",
+            "=bad",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("no name before '='"));
+
+    // pages update empty error, --replace (PUT), revisions, revision, search (no_search 404)
+    env.cmd().args(["pages", "update", "8"]).assert().code(2);
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/content/pages/8/")
+        .match_body(Matcher::Json(
+            json!({ "property_display_location": "below" }),
+        ))
+        .with_body(r#"{"id":8}"#)
+        .create();
+    env.cmd()
+        .args([
+            "pages",
+            "update",
+            "8",
+            "--property-display-location",
+            "below",
+            "--replace",
+        ])
+        .assert()
+        .success();
+    put.assert();
+
+    env.server
+        .mock("GET", "/api/v3/content/pages/8/")
+        .with_body(r#"{"id":8,"path":"/riverside/schools/"}"#)
+        .create();
+    env.cmd()
+        .args(["pages", "search", "8"])
+        .assert()
+        .code(4)
+        .stderr(predicate::str::contains("no_search"));
+
+    env.server
+        .mock("GET", "/api/v3/content/pages/8/revisions/")
+        .with_body(r#"{"results":[{"id":1}]}"#)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/pages/8/revisions/1/")
+        .with_body(r#"{"id":1,"preview":{}}"#)
+        .create();
+    env.cmd()
+        .args(["pages", "revisions", "8"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["pages", "revision", "8", "1"])
+        .assert()
+        .success();
+
+    // area-pages list --featured, delete --orphan-children, revisions, revision
+    let ap_list = env
+        .server
+        .mock("GET", "/api/v3/content/area-pages/")
+        .match_query(Matcher::UrlEncoded("featured".into(), "true".into()))
+        .with_body(r#"{"results":[{"id":23,"path":"/riverside/"}],"pagination":{}}"#)
+        .create();
+    env.cmd()
+        .args(["area-pages", "list", "--featured", "true"])
+        .assert()
+        .success();
+    ap_list.assert();
+
+    env.server
+        .mock("GET", "/api/v3/content/area-pages/23/")
+        .with_body(r#"{"id":23,"path":"/riverside/"}"#)
+        .create();
+    let ap_del = env
+        .server
+        .mock("DELETE", "/api/v3/content/area-pages/23/")
+        .match_query(Matcher::UrlEncoded("orphan_children".into(), "true".into()))
+        .with_status(204)
+        .create();
+    env.cmd()
+        .args(["area-pages", "delete", "23", "--orphan-children", "-y"])
+        .assert()
+        .success();
+    ap_del.assert();
+
+    env.server
+        .mock("GET", "/api/v3/content/area-pages/23/revisions/")
+        .with_body(r#"{"results":[{"id":4}]}"#)
+        .create();
+    env.server
+        .mock("GET", "/api/v3/content/area-pages/23/revisions/4/")
+        .with_body(r#"{"id":4,"preview":{}}"#)
+        .create();
+    env.cmd()
+        .args(["area-pages", "revisions", "23"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["area-pages", "revision", "23", "4"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn featured_areas_get_and_data_inputs() {
+    let mut env = Env::new();
+    let resp = r#"{"results":[{"attribute":"city","value":"Miami","label":"Miami","key":"city||Miami","url":"/listings/city/Miami/"}]}"#;
+    env.server
+        .mock("GET", "/api/v3/content/featured-areas/")
+        .with_body(resp)
+        .create();
+    let out = env
+        .cmd()
+        .args(["featured-areas", "get"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results"][0]["key"], "city||Miami");
+
+    let file = env.config_dir.path().join("areas.json");
+    std::fs::write(&file, r#"{"areas":[{"attribute":"city","value":"Miami"}]}"#).unwrap();
+    let put = env
+        .server
+        .mock("PUT", "/api/v3/content/featured-areas/")
+        .match_body(Matcher::Json(
+            json!({ "areas": [{"attribute": "city", "value": "Miami"}] }),
+        ))
+        .with_body(resp)
+        .expect(2)
+        .create();
+    env.cmd()
+        .args(["featured-areas", "set", "--data"])
+        .arg(format!("@{}", file.display()))
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "featured-areas",
+            "set",
+            "--data",
+            r#"[{"attribute":"city","value":"Miami"}]"#,
+        ])
+        .assert()
+        .success();
+    put.assert();
+
+    env.cmd()
+        .args(["featured-areas", "set", "--data", "{}"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn auth_status_stdin_browser_print_url_logout_use_and_refresh_errors() {
+    let mut env = Env::new();
+    // auth status subcommand works like `me`
+    env.server
+        .mock("GET", "/api/v3/me/")
+        .with_body(r#"{"api_key":{"name":"CLI","scopes":["blog:write"]},"site":{"domain":"www.test.local"}}"#)
+        .expect_at_least(2)
+        .create();
+    let out = env
+        .cmd()
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["site"]["domain"], "www.test.local");
+
+    // login without --site is exit 2
+    env.cmd()
+        .env_remove("GEEKCLI_SITE")
+        .args(["auth", "login", "--api-key", "rg_live_k"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--site <domain> is required"));
+
+    // --api-key-stdin with empty input is exit 2, with valid key succeeds
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .args(["auth", "login", "--api-key-stdin"])
+        .write_stdin("   \n")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("empty API key"));
+    env.cmd()
+        .env_remove("GEEKCLI_API_KEY")
+        .args(["auth", "login", "--api-key-stdin"])
+        .write_stdin("rg_live_stdin_key\n")
+        .assert()
+        .success();
+
+    // auth use unknown site fails (exit 3) with refresh hint when stored site has no aliases
+    env.cmd()
+        .args(["auth", "use", "unknown.example.com"])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("auth sites --refresh"));
+
+    // auth logout on a site with no stored key is exit 3
+    env.cmd()
+        .args(["auth", "logout", "--site", "not-stored.example.com"])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("no stored key"));
+
+    // auth sites when empty prints {"results": []} in JSON mode, and auth use reports no stored key
+    let empty_dir = tempfile::tempdir().unwrap();
+    let empty_sites = env
+        .cmd()
+        .env("GEEKCLI_CONFIG_DIR", empty_dir.path())
+        .args(["auth", "sites"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&empty_sites), json!({"results": []}));
+    env.cmd()
+        .env("GEEKCLI_CONFIG_DIR", empty_dir.path())
+        .args(["auth", "use", "missing.example.com"])
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains(
+            "no stored key for missing.example.com",
+        ));
+
+    // auth use and auth logout emit structured JSON in non-table mode
+    let used = env
+        .cmd()
+        .args(["auth", "use", "www.test.local"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&used), json!({"default_site": "www.test.local"}));
+    let logged_out = env
+        .cmd()
+        .args(["auth", "logout", "--site", "www.test.local"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        parse(&logged_out),
+        json!({"logged_out": true, "site": "www.test.local"})
+    );
+
+    // auth login --print-url drives the full browser callback flow through the CLI binary
+    // (covering default_key_name, scopes, Created API key note, and missing api_key error).
+    for missing_key in [false, true] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mock_port = listener.local_addr().unwrap().port();
+        let mock_url = format!("http://127.0.0.1:{mock_port}");
+        let server_url = mock_url.clone();
+        let server_thread = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let req_count = if missing_key { 2 } else { 3 };
+            for _ in 0..req_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let mut header_end = None;
+                let mut content_len = 0usize;
+                loop {
+                    let n = stream.read(&mut chunk).unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if header_end.is_none() {
+                        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            header_end = Some(pos + 4);
+                            let hdrs = String::from_utf8_lossy(&buf[..pos]);
+                            for line in hdrs.lines() {
+                                if let Some((k, v)) = line.split_once(':') {
+                                    if k.eq_ignore_ascii_case("content-length") {
+                                        content_len = v.trim().parse().unwrap_or(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(end) = header_end {
+                        if buf.len() >= end + content_len {
+                            break;
+                        }
+                    }
+                }
+                let end = header_end.unwrap_or(buf.len());
+                let head = String::from_utf8_lossy(&buf[..end]).to_string();
+                let first_line = head.lines().next().unwrap_or("");
+                let body_bytes = &buf[end..buf.len().min(end + content_len)];
+                let (status, resp_body) = if first_line.starts_with("POST /api/v3/auth/cli/start/")
+                {
+                    let req: Value = serde_json::from_slice(body_bytes).unwrap();
+                    let state = req["state"].as_str().unwrap().to_string();
+                    let cb_port = req["port"].as_u64().unwrap();
+                    let cb_addr = format!("127.0.0.1:{cb_port}");
+                    std::thread::spawn(move || {
+                        for _ in 0..50 {
+                            if let Ok(mut cb) = std::net::TcpStream::connect(&cb_addr) {
+                                let _ = write!(
+                                    cb,
+                                    "GET /callback?code=cli-code&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                                );
+                                let _ = cb.flush();
+                                let mut sink = [0u8; 256];
+                                let _ = cb.read(&mut sink);
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(15));
+                        }
+                    });
+                    (
+                        "201 Created",
+                        format!(
+                            r#"{{"request_id":"req-cli","authorize_url":"{server_url}/approve/","expires_in":5}}"#
+                        ),
+                    )
+                } else if first_line.starts_with("POST /api/v3/auth/cli/token/") {
+                    if missing_key {
+                        ("201 Created", r#"{"key":{"name":"Broken"}}"#.to_string())
+                    } else {
+                        (
+                            "201 Created",
+                            r#"{"api_key":"rg_live_browser","key":{"name":"Real Geeks CLI"},"site":{"domain":"www.browser.local"}}"#
+                                .to_string(),
+                        )
+                    }
+                } else {
+                    (
+                        "200 OK",
+                        r#"{"api_key":{"name":"Real Geeks CLI","scopes":["blog:write"]},"site":{"domain":"www.browser.local"}}"#
+                            .to_string(),
+                    )
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{resp_body}",
+                    resp_body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let cfg = tempfile::tempdir().unwrap();
+        let mut cmd = common::geekcli();
+        cmd.env("GEEKCLI_CONFIG_DIR", cfg.path())
+            .env("GEEKCLI_SITE", "www.browser.local")
+            .env("GEEKCLI_BASE_URL", &mock_url)
+            .args(["-o", "table", "auth", "login", "--print-url"]);
+        if missing_key {
+            cmd.assert()
+                .code(1)
+                .stderr(predicate::str::contains("exchange response had no api_key"));
+        } else {
+            cmd.assert().success().stderr(predicate::str::contains(
+                "Created API key \"Real Geeks CLI\"",
+            ));
+        }
+        server_thread.join().unwrap();
+    }
+
+    // auth sites --refresh reports unreachable site in table mode without aborting
+    let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_port = dead_listener.local_addr().unwrap().port();
+    drop(dead_listener);
+    let dead_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dead_dir.path().join("config.toml"),
+        format!(
+            "[sites.\"dead.test.local\"]\napi_key = \"rg_live_dead\"\nbase_url = \"http://127.0.0.1:{dead_port}\"\n"
+        ),
+    )
+    .unwrap();
+    env.cmd()
+        .env("GEEKCLI_CONFIG_DIR", dead_dir.path())
+        .env_remove("GEEKCLI_API_KEY")
+        .env_remove("GEEKCLI_BASE_URL")
+        .args(["-o", "table", "auth", "sites", "--refresh"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Could not refresh dead.test.local",
+        ));
 }

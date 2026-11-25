@@ -2,6 +2,8 @@
 //! mode, kept in the JSON on stdout, and fatal only with `--fail-on-warnings`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Mock, Server, ServerGuard};
 use serde_json::{json, Value};
@@ -22,14 +24,8 @@ impl Env {
     }
 
     fn cmd(&self) -> Command {
-        let mut cmd = Command::cargo_bin("geekcli").unwrap();
-        cmd.env_clear()
-            .env(
-                "SYSTEMROOT",
-                std::env::var("SYSTEMROOT").unwrap_or_default(),
-            )
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("GEEKCLI_SITE", "www.test.local")
+        let mut cmd = common::geekcli();
+        cmd.env("GEEKCLI_SITE", "www.test.local")
             .env("GEEKCLI_API_KEY", KEY)
             .env("GEEKCLI_BASE_URL", self.server.url())
             .env("GEEKCLI_CONFIG_DIR", self.config_dir.path());
@@ -75,7 +71,8 @@ fn written_with_warnings() -> Value {
              "message": "removed <script> and onclick from body"},
             {"code": "unknown_value", "field": "search", "criterion": "city",
              "value": "Miamy", "message": "unknown city 'Miamy'",
-             "suggestions": ["Miami", "Miami Beach", "Miami Gardens"]}
+             "suggestions": ["Miami", "Miami Beach", "Miami Gardens"]},
+            {"code": "bare", "field": "title"}
         ]
     })
 }
@@ -94,6 +91,10 @@ fn warnings_go_to_stderr_and_stay_in_stdout_json() {
         stderr.contains(
             "warning: unknown city 'Miamy' (did you mean: Miami, Miami Beach, Miami Gardens?)\n"
         ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(r#"warning: {"code":"bare","field":"title"}"#),
         "{stderr}"
     );
     let body: Value = serde_json::from_str(&stdout).unwrap();
@@ -142,28 +143,6 @@ fn fail_on_warnings_env_var() {
     let (code, _, stderr) = env.update(&[], Some(("GEEKCLI_FAIL_ON_WARNINGS", "0")));
     assert_eq!(code, 0);
     assert!(stderr.contains("warning: "), "{stderr}");
-}
-
-#[test]
-fn unknown_codes_print_their_message_or_json() {
-    let mut env = Env::new();
-    env.patch_post(&json!({
-        "id": 9,
-        "warnings": [
-            {"code": "something_new", "message": "a warning this CLI has never seen"},
-            {"code": "bare", "field": "title"}
-        ]
-    }));
-    let (code, _, stderr) = env.update(&[], None);
-    assert_eq!(code, 0);
-    assert!(
-        stderr.contains("warning: a warning this CLI has never seen\n"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(r#"warning: {"code":"bare","field":"title"}"#),
-        "{stderr}"
-    );
 }
 
 #[test]

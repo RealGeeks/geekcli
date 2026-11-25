@@ -549,15 +549,19 @@ fn decode(response: Response) -> Result<ApiResponse> {
 
 /// The body as text, refusing anything over `MAX_RESPONSE_BYTES`.
 fn read_limited(response: Response) -> Result<String> {
+    read_limited_to(response, MAX_RESPONSE_BYTES)
+}
+
+fn read_limited_to(reader: impl std::io::Read, limit: u64) -> Result<String> {
     use std::io::Read;
     let mut bytes = Vec::new();
-    response
-        .take(MAX_RESPONSE_BYTES + 1)
+    reader
+        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| Error::Io(format!("reading the response: {e}")))?;
-    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+    if bytes.len() as u64 > limit {
         return Err(Error::Other(format!(
-            "the response is larger than {MAX_RESPONSE_BYTES} bytes; refusing to read it"
+            "the response is larger than {limit} bytes; refusing to read it"
         )));
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
@@ -676,49 +680,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn login_redirects_stay_on_the_site() {
-        let url = |s: &str| reqwest::Url::parse(s).ok();
-        let allowed = |from: &str, to: &str| match (url(from), url(to)) {
-            (Some(from), Some(to)) => is_canonical_redirect(&from, &to),
-            _ => false,
+    fn login_redirects_stay_on_the_site() -> std::result::Result<(), url::ParseError> {
+        let allowed = |from: &str, to: &str| -> std::result::Result<bool, url::ParseError> {
+            Ok(is_canonical_redirect(
+                &reqwest::Url::parse(from)?,
+                &reqwest::Url::parse(to)?,
+            ))
         };
         assert!(allowed(
             "https://example.com/a",
             "https://www.example.com/a"
-        ));
+        )?);
         assert!(allowed(
             "https://www.example.com/a",
             "https://example.com/b"
-        ));
+        )?);
         assert!(allowed(
             "http://www.example.com/a",
             "https://www.example.com/a"
-        ));
+        )?);
         assert!(allowed(
             "http://127.0.0.1:8000/a",
             "http://127.0.0.1:8000/b"
-        ));
+        )?);
 
         assert!(!allowed(
             "https://www.example.com/a",
             "http://www.example.com/a"
-        ));
+        )?);
         assert!(!allowed(
             "https://www.example.com/a",
             "https://evil.example.net/a"
-        ));
+        )?);
         assert!(!allowed(
             "https://example.com/a",
             "https://www.example.com.evil.net/a"
-        ));
+        )?);
         assert!(!allowed(
             "https://www.example.com/a",
             "https://api.example.com/a"
-        ));
+        )?);
         assert!(!allowed(
             "http://127.0.0.1:8000/a",
             "http://127.0.0.1:9000/a"
-        ));
+        )?);
+        Ok(())
     }
 
     #[test]
@@ -813,15 +819,13 @@ mod tests {
     }
 
     #[test]
-    fn resolves_paths() {
+    fn resolves_paths() -> Result<()> {
         let target = Target {
             domain: "x.com".into(),
             base_url: "https://x.com".into(),
             api_key: None,
         };
-        let Ok(client) = Client::new(&target, 0, false) else {
-            return;
-        };
+        let client = Client::new(&target, 0, false)?;
         let url = |p: &str| client.url(p).ok();
         assert_eq!(
             url("blog/posts/").as_deref(),
@@ -840,5 +844,304 @@ mod tests {
         assert_eq!(url("https://x.com.evil.net/api/v3/"), None);
         assert_eq!(url("http://x.com/api/v3/blog/posts/"), None);
         assert_eq!(url("https://x.com:8443/api/v3/"), None);
+        assert_eq!(client.root(), "https://x.com/api/v3/");
+        assert!(!client.has_key());
+        assert_eq!(
+            client.site_url("https://other.example/path"),
+            "https://other.example/path"
+        );
+        assert_eq!(
+            client.site_url("/search/results/"),
+            "https://x.com/search/results/"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_error_handles_legacy_v2_fields_and_plain_text_bodies() {
+        // legacy /api/v2/ shape: {"error": "message"}
+        let v2 = parse_error(400, r#"{"error":"bad query"}"#, None);
+        assert_eq!(v2.code, "http_error");
+        assert_eq!(v2.message, "bad query");
+
+        // non-array field entries (string, scalar, and mixed array elements)
+        let mixed = parse_error(
+            422,
+            r#"{"error":{"code":"validation_error","message":"invalid","fields":{"slug":"taken","count":3,"nums":[1,true]}}}"#,
+            Some(5),
+        );
+        assert_eq!(mixed.fields.get("slug"), Some(&vec!["taken".to_string()]));
+        assert_eq!(mixed.fields.get("count"), Some(&vec!["3".to_string()]));
+        assert_eq!(
+            mixed.fields.get("nums"),
+            Some(&vec!["1".to_string(), "true".to_string()])
+        );
+        assert_eq!(mixed.retry_after, Some(5));
+
+        // plain text non-JSON body keeps the snippet; status maps to default_code
+        for (status, code) in [
+            (401, "unauthorized"),
+            (403, "forbidden"),
+            (404, "not_found"),
+            (405, "method_not_allowed"),
+            (409, "conflict"),
+            (429, "rate_limited"),
+            (503, "server_error"),
+            (418, "http_error"),
+        ] {
+            let err = parse_error(status, "plain text reason", None);
+            assert_eq!(err.code, code);
+            assert_eq!(err.message, format!("HTTP {status}: plain text reason"));
+        }
+
+        // empty body gets the helpful API-enabled hint
+        let empty = parse_error(404, "   ", None);
+        assert!(
+            empty.message.contains("no JSON error body"),
+            "{}",
+            empty.message
+        );
+    }
+
+    #[test]
+    fn quota_warning_handles_unix_timestamp_reset_missing_reset_and_zero_limit() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (k, v) in pairs {
+                map.insert(*k, HeaderValue::from_static(v));
+            }
+            map
+        };
+        assert!(quota_warning(&headers(&[("x-ratelimit-remaining", "5"),])).is_none());
+        assert!(quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-limit", "0"),
+        ]))
+        .is_none());
+
+        let no_reset = quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "5"),
+            ("x-ratelimit-limit", "100"),
+        ]));
+        assert_eq!(
+            no_reset.as_deref(),
+            Some("warning: rate limit nearly used: 5 of 100 requests left in this window")
+        );
+
+        // Unix timestamp reset (>= 1_000_000_000) computes relative delta
+        let past_ts = quota_warning(&headers(&[
+            ("x-ratelimit-remaining", "5"),
+            ("x-ratelimit-limit", "100"),
+            ("x-ratelimit-reset", "1000000000"),
+        ]));
+        assert_eq!(
+            past_ts.as_deref(),
+            Some("warning: rate limit nearly used: 5 of 100 requests left in this window (resets in 0s)")
+        );
+    }
+
+    #[test]
+    fn canonical_redirect_rejects_hostless_urls() -> std::result::Result<(), url::ParseError> {
+        let from = reqwest::Url::parse("mailto:user@example.com")?;
+        let to = reqwest::Url::parse("https://example.com/")?;
+        assert!(!is_canonical_redirect(&from, &to));
+        Ok(())
+    }
+
+    #[test]
+    fn post_multipart_requires_api_key_and_validates_origin_and_form() -> Result<()> {
+        let anon_target = Target {
+            domain: "x.com".into(),
+            base_url: "https://x.com".into(),
+            api_key: None,
+        };
+        let anon = Client::new(&anon_target, 0, false)?;
+        let err = anon.post_multipart("files/upload/", || {
+            Err(Error::Other("should not be called".into()))
+        });
+        assert!(matches!(err, Err(Error::NotLoggedIn(_))));
+
+        let authed_target = Target {
+            domain: "x.com".into(),
+            base_url: "https://x.com".into(),
+            api_key: Some("rg_live_k".into()),
+        };
+        let authed = Client::new(&authed_target, 0, false)?;
+        assert!(matches!(
+            authed.post_multipart("https://evil.example/upload/", || Ok(
+                reqwest::blocking::multipart::Form::new()
+            )),
+            Err(Error::Usage(_))
+        ));
+        assert!(matches!(
+            authed.post_multipart("files/upload/", || Err(Error::Io("cannot read".into()))),
+            Err(Error::Io(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn read_limited_enforces_size_limit_and_reports_io_errors() -> Result<()> {
+        struct BrokenReader;
+        impl std::io::Read for BrokenReader {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("stream broke"))
+            }
+        }
+        assert_eq!(read_limited_to(b"hello".as_slice(), 5)?, "hello");
+        assert!(matches!(
+            read_limited_to(b"hello!".as_slice(), 5),
+            Err(Error::Other(m)) if m.contains("larger than 5 bytes")
+        ));
+        assert!(matches!(
+            read_limited_to(BrokenReader, 10),
+            Err(Error::Io(m)) if m.contains("stream broke")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn get_all_strips_page_and_keeps_explicit_page_size() -> Result<()> {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/api/v3/items/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "page_size".into(),
+                "25".into(),
+            ))
+            .with_body(r#"{"results":[{"id":1}],"pagination":{"next":null}}"#)
+            .create();
+        let target = Target {
+            domain: "www.test.local".into(),
+            base_url: server.url(),
+            api_key: Some("rg_live_k".into()),
+        };
+        let client = Client::new(&target, 0, false)?;
+        let rows = client.get_all(
+            "items/",
+            &vec![
+                ("page".into(), "3".into()),
+                ("page_size".into(), "25".into()),
+            ],
+        )?;
+        assert_eq!(rows.len(), 1);
+        mock.assert();
+
+        // get_all rejects off-origin URLs, tolerates missing results, and surfaces page 1 & 2 errors
+        assert!(matches!(
+            client.get_all("https://evil.example/items/", &Query::new()),
+            Err(Error::Usage(_))
+        ));
+        server
+            .mock("GET", "/api/v3/empty-shape/")
+            .match_query(mockito::Matcher::Any)
+            .with_body(r#"{"pagination":{"next":null}}"#)
+            .create();
+        assert_eq!(client.get_all("empty-shape/", &Query::new())?.len(), 0);
+
+        server
+            .mock("GET", "/api/v3/fail-p1/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .with_body("{}")
+            .create();
+        assert!(matches!(
+            client.get_all("fail-p1/", &Query::new()),
+            Err(Error::Api { status: 500, .. })
+        ));
+
+        let p2_url = format!("{}/api/v3/fail-p2/?page=2", server.url());
+        server
+            .mock("GET", "/api/v3/fail-p2/")
+            .match_query(mockito::Matcher::UrlEncoded("page".into(), "2".into()))
+            .with_status(500)
+            .with_body("{}")
+            .create();
+        server
+            .mock("GET", "/api/v3/fail-p2/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "page_size".into(),
+                "100".into(),
+            ))
+            .with_body(format!(
+                r#"{{"results":[{{"id":1}}],"pagination":{{"next":"{p2_url}"}}}}"#
+            ))
+            .create();
+        assert!(matches!(
+            client.get_all("fail-p2/", &Query::new()),
+            Err(Error::Api { status: 500, .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn warning_line_handles_non_string_suggestions() {
+        let body = serde_json::json!({
+            "warnings": [{
+                "code": "unknown_value",
+                "message": "Unknown zip",
+                "suggestions": [22101, "22102"]
+            }]
+        });
+        assert_eq!(
+            warning_lines(&body),
+            vec!["Unknown zip (did you mean: 22101, 22102?)"]
+        );
+    }
+
+    #[test]
+    fn anonymous_post_rejects_invalid_location_headers() -> Result<()> {
+        use std::io::{Read as _, Write as _};
+        for raw_location in [b"\xff\xfe".as_slice(), b"http://[::1".as_slice()] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let port = listener.local_addr()?.port();
+            let loc = raw_location.to_vec();
+            let handle = std::thread::spawn(move || {
+                if let Ok((mut s, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf);
+                    let mut resp = b"HTTP/1.1 301 Moved\r\nLocation: ".to_vec();
+                    resp.extend_from_slice(&loc);
+                    resp.extend_from_slice(b"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = s.write_all(&resp);
+                }
+            });
+            let target = Target {
+                domain: "www.test.local".into(),
+                base_url: format!("http://127.0.0.1:{port}"),
+                api_key: None,
+            };
+            let client = Client::new(&target, 0, false)?;
+            let err = client
+                .anonymous_post_preserving_redirects("auth/cli/start/", &serde_json::json!({}));
+            let _ = handle.join();
+            assert!(matches!(err, Err(Error::Other(m)) if m.contains("invalid")));
+        }
+
+        // Off-origin URL and closed loopback port fail cleanly
+        let dead = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let dead_port = dead.local_addr()?.port();
+        drop(dead);
+        let client = Client::new(
+            &Target {
+                domain: "www.test.local".into(),
+                base_url: format!("http://127.0.0.1:{dead_port}"),
+                api_key: None,
+            },
+            0,
+            false,
+        )?;
+        assert!(matches!(
+            client.anonymous_post_preserving_redirects(
+                "https://evil.example/x",
+                &serde_json::json!({})
+            ),
+            Err(Error::Usage(_))
+        ));
+        assert!(matches!(
+            client.anonymous_post_preserving_redirects("auth/cli/start/", &serde_json::json!({})),
+            Err(Error::Network(_))
+        ));
+        Ok(())
     }
 }

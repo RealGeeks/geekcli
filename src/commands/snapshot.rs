@@ -287,6 +287,26 @@ pub fn default_out(target: &str) -> PathBuf {
 
 /// The first Chrome-family browser we can find.
 pub fn find_browser(explicit: Option<&Path>) -> Result<PathBuf> {
+    find_browser_with(
+        explicit,
+        &candidates(),
+        &[
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "chrome",
+            "brave-browser",
+            "microsoft-edge",
+        ],
+    )
+}
+
+fn find_browser_with(
+    explicit: Option<&Path>,
+    candidates: &[PathBuf],
+    path_names: &[&str],
+) -> Result<PathBuf> {
     if let Some(path) = explicit {
         if path.exists() {
             return Ok(path.to_path_buf());
@@ -299,20 +319,12 @@ pub fn find_browser(explicit: Option<&Path>) -> Result<PathBuf> {
             path.display()
         )));
     }
-    for candidate in candidates() {
+    for candidate in candidates {
         if candidate.exists() {
-            return Ok(candidate);
+            return Ok(candidate.clone());
         }
     }
-    for name in [
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-        "chrome",
-        "brave-browser",
-        "microsoft-edge",
-    ] {
+    for name in path_names {
         if let Some(found) = on_path(name) {
             return Ok(found);
         }
@@ -424,5 +436,78 @@ mod tests {
             find_browser(Some(Path::new("/nope/chrome"))),
             Err(Error::Config(_))
         ));
+    }
+
+    #[test]
+    fn resolve_url_joins_relative_paths_and_keeps_absolute_urls() -> Result<()> {
+        let target = crate::config::Target {
+            domain: "www.example.com".into(),
+            base_url: "https://www.example.com".into(),
+            api_key: None,
+        };
+        let client = crate::client::Client::new(&target, 0, false)?;
+        assert_eq!(
+            resolve_url(&client, " https://other.example/x "),
+            "https://other.example/x"
+        );
+        assert_eq!(
+            resolve_url(&client, "/blog/post/"),
+            "https://www.example.com/blog/post/"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn playwright_chromium_lists_newest_builds_first_and_ignores_others() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir(dir.path().join("chromium-1000"))?;
+        std::fs::create_dir(dir.path().join("chromium-1200"))?;
+        std::fs::create_dir(dir.path().join("firefox-9999"))?;
+        let found = playwright_chromium(dir.path(), "chrome/bin");
+        assert_eq!(
+            found,
+            vec![
+                dir.path().join("chromium-1200/chrome/bin"),
+                dir.path().join("chromium-1000/chrome/bin"),
+            ]
+        );
+        assert_eq!(
+            playwright_chromium(&dir.path().join("missing"), "chrome/bin"),
+            Vec::<PathBuf>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn find_browser_checks_explicit_candidates_path_and_errors() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let bin = dir.path().join("fake-chrome");
+        std::fs::write(&bin, b"")?;
+        assert_eq!(find_browser(Some(&bin))?, bin);
+
+        // Candidate list match
+        let missing = dir.path().join("nope");
+        assert_eq!(
+            find_browser_with(None, &[missing.clone(), bin.clone()], &[])?,
+            bin
+        );
+
+        // PATH lookup for both explicit name and fallback list (using a standard tool on PATH)
+        let tool = if cfg!(windows) { "cmd.exe" } else { "sh" };
+        assert!(find_browser_with(Some(Path::new(tool)), &[], &[]).is_ok());
+        assert!(find_browser_with(None, std::slice::from_ref(&missing), &[tool]).is_ok());
+
+        // Nothing found reports Config error
+        assert!(matches!(
+            find_browser_with(None, &[missing], &["definitely-not-a-browser-xyz"]),
+            Err(Error::Config(m)) if m.contains("no Chrome or Chromium found")
+        ));
+
+        // cdp wraps anyhow errors with context
+        assert!(matches!(
+            cdp::<()>(Err(anyhow::anyhow!("timeout")), "cannot open"),
+            Err(Error::Other(m)) if m.contains("cannot open: timeout")
+        ));
+        Ok(())
     }
 }

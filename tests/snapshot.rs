@@ -2,7 +2,8 @@
 //! browser is installed; without one the test is skipped, not failed.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use assert_cmd::Command;
+mod common;
+
 use geekcli::commands::snapshot::find_browser;
 use mockito::Server;
 use predicates::prelude::*;
@@ -28,14 +29,7 @@ fn full_page_capture_is_taller_than_the_viewport() {
         .create();
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("full.png");
-    let mut cmd = Command::cargo_bin("geekcli").unwrap();
-    let assert = cmd
-        .env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+    let assert = common::geekcli()
         .env("HOME", std::env::var("HOME").unwrap_or_default())
         .env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_BASE_URL", server.url())
@@ -71,14 +65,7 @@ fn selector_capture_is_the_matched_element() {
         .create();
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("component.png");
-    let mut cmd = Command::cargo_bin("geekcli").unwrap();
-    let assert = cmd
-        .env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+    let assert = common::geekcli()
         .env("HOME", std::env::var("HOME").unwrap_or_default())
         .env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_BASE_URL", server.url())
@@ -106,12 +93,7 @@ fn selector_capture_is_the_matched_element() {
 #[test]
 fn missing_browser_is_a_clear_error() {
     let dir = tempfile::tempdir().unwrap();
-    let mut cmd = Command::cargo_bin("geekcli").unwrap();
-    cmd.env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
+    common::geekcli()
         .env("PATH", "/nonexistent")
         .env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_CONFIG_DIR", dir.path())
@@ -119,4 +101,142 @@ fn missing_browser_is_a_clear_error() {
         .assert()
         .code(3)
         .stderr(predicate::str::contains("browser not found"));
+}
+
+#[test]
+fn mobile_quiet_table_selector_errors_and_design_preview_snapshot() {
+    if find_browser(None).is_err() {
+        eprintln!("skipping: no Chrome installed");
+        return;
+    }
+    let mut server = Server::new();
+    server
+        .mock("GET", "/")
+        .with_header("content-type", "text/html")
+        .with_body(PAGE)
+        .expect_at_least(3)
+        .create();
+    server
+        .mock("POST", "/api/v3/design/preview/")
+        .with_body(
+            r#"{"template":"molly","styles":{"name":"classic"},"preview_url":"https://www.test.local/?preview_template=molly"}"#,
+        )
+        .create();
+    server
+        .mock("GET", "/?preview_template=molly")
+        .with_header("content-type", "text/html")
+        .with_body(PAGE)
+        .create();
+    let dir = tempfile::tempdir().unwrap();
+
+    // --mobile + -q + -o table creates parent directory and prints the output path
+    let mobile_out = dir.path().join("nested").join("mobile.png");
+    let assert = common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "-q", "-o", "table", "snapshot", "/", "--mobile", "--wait", "10", "--out",
+        ])
+        .arg(&mobile_out)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Rendering"));
+    assert_eq!(
+        String::from_utf8_lossy(&assert.get_output().stdout).trim(),
+        mobile_out.display().to_string()
+    );
+    assert_eq!(&std::fs::read(&mobile_out).unwrap()[1..4], b"PNG");
+
+    // --nth out of range and unmatched selector fail clearly
+    common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "snapshot",
+            "/",
+            "--selector",
+            ".component",
+            "--nth",
+            "5",
+            "--wait",
+            "10",
+            "--out",
+        ])
+        .arg(dir.path().join("oob.png"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("out of range"));
+
+    common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "snapshot",
+            "/",
+            "--selector",
+            ".does-not-exist",
+            "--wait",
+            "10",
+            "--out",
+        ])
+        .arg(dir.path().join("none.png"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("no element matches selector"));
+
+    // design preview --template molly --snapshot renders the rehomed preview link
+    let preview_out = dir.path().join("design").join("preview.png");
+    common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_API_KEY", "rg_live_test")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "-o",
+            "table",
+            "design",
+            "preview",
+            "--template",
+            "molly",
+            "--snapshot",
+        ])
+        .arg(&preview_out)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Rendered"));
+    assert_eq!(&std::fs::read(&preview_out).unwrap()[1..4], b"PNG");
+
+    // design set --template molly --snapshot renders the live home page after saving
+    server
+        .mock("PATCH", "/api/v3/design/")
+        .with_body(r#"{"template":"molly","styles":{"name":"classic","vars":{}}}"#)
+        .create();
+    let set_out = dir.path().join("design").join("live.png");
+    common::geekcli()
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_API_KEY", "rg_live_test")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "-o",
+            "table",
+            "design",
+            "set",
+            "--template",
+            "molly",
+            "--snapshot",
+        ])
+        .arg(&set_out)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Rendered"));
+    assert_eq!(&std::fs::read(&set_out).unwrap()[1..4], b"PNG");
 }

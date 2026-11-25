@@ -48,10 +48,17 @@ pub struct SiteConfig {
     pub aliases: Vec<String>,
 }
 
-pub fn config_dir() -> Result<PathBuf> {
+/// Where the config lives: a directory set with `GEEKCLI_CONFIG_DIR`, or the
+/// base folder (`~/.config`, honouring `XDG_CONFIG_HOME`) that holds it.
+enum Location {
+    Explicit(PathBuf),
+    Base(PathBuf),
+}
+
+fn location() -> Result<Location> {
     if let Ok(dir) = std::env::var(CONFIG_DIR_ENV) {
         if !dir.is_empty() {
-            return Ok(PathBuf::from(dir));
+            return Ok(Location::Explicit(PathBuf::from(dir)));
         }
     }
     // ~/.config on every platform (honouring XDG_CONFIG_HOME), like most
@@ -62,7 +69,24 @@ pub fn config_dir() -> Result<PathBuf> {
             .ok_or_else(|| Error::Config("cannot determine the home directory".into()))?
             .join(".config"),
     };
-    Ok(migrate_legacy_dir(&base))
+    Ok(Location::Base(base))
+}
+
+pub fn config_dir() -> Result<PathBuf> {
+    Ok(match location()? {
+        Location::Explicit(dir) => dir,
+        Location::Base(base) => migrate_legacy_dir(&base),
+    })
+}
+
+/// The config file in use, found without moving a legacy one: for checks
+/// (such as which local files may be sent) that must not touch the disk.
+pub fn config_path_in_use() -> Result<PathBuf> {
+    let dir = match location()? {
+        Location::Explicit(dir) => dir,
+        Location::Base(base) => dir_in_use(&base),
+    };
+    Ok(dir.join("config.toml"))
 }
 
 /// The CLI was called `realgeeks` before it was `geekcli`. Move a config left
@@ -70,11 +94,22 @@ pub fn config_dir() -> Result<PathBuf> {
 /// the old directory if the move fails rather than losing the stored keys.
 fn migrate_legacy_dir(base: &Path) -> PathBuf {
     let dir = base.join("geekcli");
-    let legacy = base.join("realgeeks");
-    if !dir.exists() && legacy.join("config.toml").is_file() && fs::rename(&legacy, &dir).is_err() {
-        return legacy;
+    let in_use = dir_in_use(base);
+    if in_use != dir && fs::rename(&in_use, &dir).is_err() {
+        return in_use;
     }
     dir
+}
+
+/// `geekcli`, or the legacy `realgeeks` while it still holds the only config.
+fn dir_in_use(base: &Path) -> PathBuf {
+    let dir = base.join("geekcli");
+    let legacy = base.join("realgeeks");
+    if !dir.exists() && legacy.join("config.toml").is_file() {
+        legacy
+    } else {
+        dir
+    }
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -610,6 +645,20 @@ mod tests {
     }
 
     #[test]
+    fn dir_in_use_finds_a_legacy_config_without_moving_it() -> std::io::Result<()> {
+        let base = tempfile::tempdir()?;
+        assert_eq!(dir_in_use(base.path()), base.path().join("geekcli"));
+        fs::create_dir(base.path().join("realgeeks"))?;
+        fs::write(base.path().join("realgeeks/config.toml"), "")?;
+
+        assert_eq!(dir_in_use(base.path()), base.path().join("realgeeks"));
+        // looking is read-only: the legacy dir is still there, not migrated
+        assert!(base.path().join("realgeeks/config.toml").is_file());
+        assert!(!base.path().join("geekcli").exists());
+        Ok(())
+    }
+
+    #[test]
     fn leaves_the_old_dir_alone_once_the_new_one_exists() -> std::io::Result<()> {
         let base = tempfile::tempdir()?;
         fs::create_dir_all(base.path().join("realgeeks"))?;
@@ -687,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_through_toml() {
+    fn round_trips_through_toml() -> Result<()> {
         let mut config = Config::default();
         config.put_site(
             "a.com",
@@ -697,11 +746,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        let dir = tempfile::tempdir().ok();
-        let Some(dir) = dir else { return };
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("config.toml");
-        assert!(config.save_to(&path).is_ok());
-        assert_eq!(Config::load_from(&path).ok(), Some(config));
+        config.save_to(&path)?;
+        assert_eq!(Config::load_from(&path)?, config);
+        Ok(())
     }
 
     fn aliased(key: &str, aliases: &[&str]) -> SiteConfig {
@@ -720,14 +769,16 @@ mod tests {
     }
 
     #[test]
-    fn loads_a_config_written_before_aliases() {
+    fn loads_a_config_written_before_aliases() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
         let raw = "default_site = \"example.realgeeks.com\"\n\n[sites.\"example.realgeeks.com\"]\napi_key = \"rg_live_old\"\nscopes = [\"blog:write\"]\n";
-        let config: Config = toml::from_str(raw).unwrap_or_default();
+        let config: Config = toml::from_str(raw)?;
         let site = config.site("example.realgeeks.com");
         assert_eq!(site.map(|s| s.api_key.as_str()), Some("rg_live_old"));
         assert_eq!(site.map(|s| s.aliases.len()), Some(0));
-        let saved = toml::to_string_pretty(&config).unwrap_or_default();
+        let saved = toml::to_string_pretty(&config)?;
         assert!(!saved.contains("aliases"), "{saved}");
+        Ok(())
     }
 
     #[test]
@@ -838,5 +889,106 @@ mod tests {
             aliases_from_me(&serde_json::json!({}), "a.com").as_slice(),
             []
         ));
+    }
+
+    #[test]
+    fn resolve_target_accepts_base_url_without_site_and_rejects_invalid_urls() -> Result<()> {
+        let target = resolve_target(
+            &Config::default(),
+            &Overrides {
+                site: None,
+                api_key: Some("rg_live_dev".into()),
+                base_url: Some("http://127.0.0.1:8000/".into()),
+            },
+        )?;
+        assert_eq!(target.domain, "127.0.0.1:8000");
+        assert_eq!(target.base_url, "http://127.0.0.1:8000");
+        assert_eq!(target.api_key.as_deref(), Some("rg_live_dev"));
+
+        assert!(matches!(
+            check_transport("not a url"),
+            Err(Error::Config(_))
+        ));
+
+        // Stored plain-http remote base_url is rejected by resolve_target
+        let mut bad_cfg = Config::default();
+        bad_cfg.put_site(
+            "www.remote.example",
+            SiteConfig {
+                api_key: "rg_live_k".into(),
+                base_url: Some("http://www.remote.example".into()),
+                key_name: None,
+                scopes: vec![],
+                expires_at: None,
+                aliases: vec![],
+            },
+        );
+        assert!(matches!(
+            resolve_target(&bad_cfg, &Overrides::default()),
+            Err(Error::Config(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn load_and_save_report_io_and_toml_errors() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let bad = dir.path().join("bad.toml");
+        fs::write(&bad, "default_site = [unclosed")?;
+        assert!(matches!(
+            Config::load_from(&bad),
+            Err(Error::Config(m)) if m.contains("cannot parse")
+        ));
+
+        // Reading a directory fails with a Config IO error
+        assert!(matches!(
+            Config::load_from(dir.path()),
+            Err(Error::Config(m)) if m.contains("cannot read")
+        ));
+
+        // Saving under a path whose parent is an existing file fails cleanly
+        let blocker = dir.path().join("file");
+        fs::write(&blocker, "x")?;
+        assert!(matches!(
+            Config::default().save_to(&blocker.join("config.toml")),
+            Err(Error::Config(m)) if m.contains("cannot create")
+        ));
+
+        // Saving directly over an existing directory fails rename and cleans up its temp file
+        let target_dir = dir.path().join("existing-dir");
+        fs::create_dir(&target_dir)?;
+        assert!(matches!(
+            Config::default().save_to(&target_dir),
+            Err(Error::Config(m)) if m.contains("cannot write")
+        ));
+        tighten(Path::new("nonexistent-geekcli-config.toml"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tighten_ignores_symlinks_and_migrate_falls_back_when_rename_fails() -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let target = dir.path().join("target");
+        fs::write(&target, "secret")?;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644))?;
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        assert_eq!(tighten_one(&link, 0o600), None);
+        assert_eq!(fs::metadata(&target)?.permissions().mode() & 0o777, 0o644);
+
+        // A dangling `geekcli` symlink does not "exist", but renaming a
+        // directory onto it fails (ENOTDIR), even as root, so legacy is kept.
+        let base = tempfile::tempdir()?;
+        let legacy = base.path().join("realgeeks");
+        fs::create_dir(&legacy)?;
+        fs::write(legacy.join("config.toml"), "default_site = \"a.com\"\n")?;
+        std::os::unix::fs::symlink(base.path().join("nowhere"), base.path().join("geekcli"))?;
+        let chosen = migrate_legacy_dir(base.path());
+        assert_eq!(chosen, legacy);
+        assert!(legacy.join("config.toml").is_file());
+        Ok(())
     }
 }

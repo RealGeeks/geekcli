@@ -297,6 +297,59 @@ mod ring_backend {
             )))
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn hashes_and_one_shot_digests_match_for_sha2_variants() -> Result<()> {
+            let cases = [
+                (HashAlgorithm::Sha2256, RING.sha256(b"hello").to_vec()),
+                (HashAlgorithm::Sha2384, RING.sha384(b"hello").to_vec()),
+                (HashAlgorithm::Sha2512, RING.sha512(b"hello").to_vec()),
+            ];
+            for (alg, expected) in cases {
+                let mut h = RING.hash(alg)?;
+                h.update(b"hel");
+                h.update(b"lo");
+                assert_eq!(h.finalize(), expected);
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn maps_supported_schemes_and_rejects_bad_or_prehashed_signatures() {
+            for scheme in [
+                SigningScheme::EcdsaP256Sha256,
+                SigningScheme::EcdsaP256Sha384,
+                SigningScheme::EcdsaP384Sha256,
+                SigningScheme::EcdsaP384Sha384,
+                SigningScheme::Ed25519,
+                SigningScheme::RsaPssSha256,
+                SigningScheme::RsaPssSha384,
+                SigningScheme::RsaPssSha512,
+                SigningScheme::RsaPkcs1Sha256,
+                SigningScheme::RsaPkcs1Sha384,
+                SigningScheme::RsaPkcs1Sha512,
+            ] {
+                assert!(algorithm(scheme).is_some(), "{scheme:?}");
+            }
+            assert!(matches!(
+                RING.verify_raw(SigningScheme::EcdsaP256Sha256, b"not-a-key", b"msg", b"sig"),
+                Err(Error::Verification(_))
+            ));
+            assert!(algorithm(SigningScheme::MlDsa65).is_none());
+            assert!(matches!(
+                RING.verify_raw(SigningScheme::MlDsa65, b"key", b"msg", b"sig"),
+                Err(Error::UnsupportedAlgorithm(_))
+            ));
+            assert!(matches!(
+                RING.verify_prehashed(SigningScheme::EcdsaP256Sha256, b"key", b"digest", b"sig"),
+                Err(Error::UnsupportedAlgorithm(_))
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -310,57 +363,69 @@ mod tests {
     const MACOS_ARM: &str = "abc70083b503abd91b54b213ae3f1040027d4071ba39b146dcf04c9f1100c879";
     const LINUX_X86: &str = "0784e85429a607f5fe0fda71e97ad21845811071b0d247de4cf416cb4456a504";
 
-    fn fixture() -> Value {
-        serde_json::from_str(V0_12_1).unwrap_or_default()
+    fn fixture() -> std::result::Result<Value, serde_json::Error> {
+        serde_json::from_str(V0_12_1)
     }
 
     #[test]
-    fn a_release_archive_verifies() {
-        assert_eq!(verify(&fixture(), MACOS_ARM), Ok(()));
+    fn a_release_archive_verifies() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let doc = fixture()?;
+        assert_eq!(verify(&doc, MACOS_ARM), Ok(()));
         // one attestation covers every archive of the release
-        assert_eq!(verify(&fixture(), LINUX_X86), Ok(()));
+        assert_eq!(verify(&doc, LINUX_X86), Ok(()));
+        Ok(())
     }
 
     #[test]
-    fn only_the_release_workflow_on_main_is_trusted() {
+    fn only_the_release_workflow_on_main_is_trusted(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let doc = fixture()?;
         for signer in [
             "https://github.com/RealGeeks/geekcli/.github/workflows/release.yml@refs/heads/other",
             "https://github.com/someone/geekcli/.github/workflows/release.yml@refs/heads/main",
         ] {
-            let err = verify_signed_by(&fixture(), MACOS_ARM, signer)
-                .err()
-                .unwrap_or_default();
-            assert!(err.contains("identity"), "{signer}: {err}");
+            let err = verify_signed_by(&doc, MACOS_ARM, signer).err();
+            assert!(
+                err.as_deref().is_some_and(|e| e.contains("identity")),
+                "{signer}: {err:?}"
+            );
         }
+        Ok(())
     }
 
     #[test]
-    fn another_digest_does_not() {
+    fn another_digest_does_not() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let other = "1".repeat(64);
-        let err = verify(&fixture(), &other).err().unwrap_or_default();
-        assert!(err.contains("does not match"), "{err}");
+        let err = verify(&fixture()?, &other).err();
+        assert!(
+            err.as_deref().is_some_and(|e| e.contains("does not match")),
+            "{err:?}"
+        );
+        Ok(())
     }
 
     #[test]
-    fn a_tampered_statement_does_not() {
-        let mut doc = fixture();
+    fn a_tampered_statement_does_not() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut doc = fixture()?;
         let payload = doc
             .pointer("/attestations/0/bundle/dsseEnvelope/payload")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .unwrap_or_default();
-        assert!(!payload.is_empty(), "fixture has no payload");
+            .ok_or("fixture has no payload")?;
         let engine = base64::engine::general_purpose::STANDARD;
-        let text =
-            String::from_utf8(engine.decode(payload).unwrap_or_default()).unwrap_or_default();
+        let text = String::from_utf8(engine.decode(payload)?)?;
         // claim a different archive digest in the signed statement
         let forged = text.replace(MACOS_ARM, &"2".repeat(64));
         assert_ne!(forged, text);
         if let Some(p) = doc.pointer_mut("/attestations/0/bundle/dsseEnvelope/payload") {
             *p = Value::String(engine.encode(forged));
         }
-        let err = verify(&doc, &"2".repeat(64)).err().unwrap_or_default();
-        assert!(err.contains("did not verify"), "{err}");
+        let err = verify(&doc, &"2".repeat(64)).err();
+        assert!(
+            err.as_deref().is_some_and(|e| e.contains("did not verify")),
+            "{err:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -378,6 +443,130 @@ mod tests {
             sha256_file(&path)?,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+        assert!(sha256_file(&dir.path().join("missing")).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn verify_rejects_bad_digest_wrong_predicate_and_malformed_bundle() {
+        let bad_hex = verify(&serde_json::json!({}), "not-hex");
+        assert!(bad_hex.as_ref().is_err_and(|e| e.contains("bad sha256")));
+
+        let engine = base64::engine::general_purpose::STANDARD;
+        for malformed in [
+            serde_json::json!({}),
+            serde_json::json!({"dsseEnvelope": {"payload": 123}}),
+            serde_json::json!({"dsseEnvelope": {"payload": "!!!not-base64"}}),
+            serde_json::json!({"dsseEnvelope": {"payload": engine.encode("not-json")}}),
+            serde_json::json!({"dsseEnvelope": {"payload": engine.encode("{}")}}),
+        ] {
+            assert_eq!(predicate_type(&malformed), None, "{malformed}");
+        }
+        let wrong_pred = serde_json::json!({
+            "attestations": [{
+                "bundle": {
+                    "dsseEnvelope": {
+                        "payload": engine.encode(r#"{"predicateType":"https://example.com/other/v1"}"#)
+                    }
+                }
+            }]
+        });
+        let err = verify(&wrong_pred, MACOS_ARM);
+        assert!(err
+            .as_ref()
+            .is_err_and(|e| e.contains("not build provenance")));
+
+        let malformed_bundle = serde_json::json!({
+            "attestations": [{
+                "bundle": {
+                    "dsseEnvelope": {
+                        "payload": engine.encode(format!(r#"{{"predicateType":"{PREDICATE}"}}"#))
+                    }
+                }
+            }]
+        });
+        let err = verify(&malformed_bundle, MACOS_ARM);
+        assert!(err
+            .as_ref()
+            .is_err_and(|e| e.contains("unreadable attestation bundle")));
+    }
+
+    #[test]
+    fn check_fetches_verifies_with_token_and_maps_http_and_json_errors() {
+        let mut server = mockito::Server::new();
+        let path = format!("/repos/{REPO}/attestations/sha256:{MACOS_ARM}");
+
+        let ok_mock = server
+            .mock("GET", path.as_str())
+            .match_header("authorization", "Bearer ghp_test_token")
+            .match_header("accept", "application/vnd.github+json")
+            .with_status(200)
+            .with_body(V0_12_1)
+            .create();
+        assert_eq!(
+            check(&server.url(), Some("ghp_test_token"), MACOS_ARM),
+            Ok(())
+        );
+        ok_mock.assert();
+
+        let not_found = server
+            .mock("GET", path.as_str())
+            .with_status(404)
+            .with_body("{}")
+            .create();
+        let err = check(&server.url(), None, MACOS_ARM);
+        assert!(err
+            .as_ref()
+            .is_err_and(|e| e.contains("no build-provenance attestation")));
+        not_found.assert();
+
+        let rate_limited = server
+            .mock("GET", path.as_str())
+            .with_status(429)
+            .with_body("{}")
+            .create();
+        let err = check(&server.url(), None, MACOS_ARM);
+        assert!(err.as_ref().is_err_and(|e| e.contains("rate limiting")));
+        rate_limited.assert();
+
+        let server_err = server
+            .mock("GET", path.as_str())
+            .with_status(500)
+            .with_body("boom")
+            .create();
+        let err = check(&server.url(), None, MACOS_ARM);
+        assert!(err
+            .as_ref()
+            .is_err_and(|e| e.contains("cannot look up its attestation")));
+        server_err.assert();
+
+        let bad_json = server
+            .mock("GET", path.as_str())
+            .with_status(200)
+            .with_body("not json")
+            .create();
+        let err = check(&server.url(), None, MACOS_ARM);
+        assert!(err
+            .as_ref()
+            .is_err_and(|e| e.contains("unreadable attestation response")));
+        bad_json.assert();
+    }
+
+    #[test]
+    fn chain_formats_nested_error_sources() {
+        #[derive(Debug)]
+        struct Outer(std::io::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "outer")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let err = Outer(std::io::Error::other("inner"));
+        assert_eq!(chain(&err), "outer: inner");
     }
 }

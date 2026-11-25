@@ -341,4 +341,24 @@ mod tests {
         };
         assert!(matches!(bad.body(), Err(Error::Usage(_))));
     }
+
+    #[test]
+    fn rehome_leaves_invalid_urls_unchanged() -> Result<()> {
+        let target = crate::config::Target {
+            domain: "www.example.com".into(),
+            base_url: "https://www.example.com".into(),
+            api_key: None,
+        };
+        let client = crate::client::Client::new(&target, 0, false)?;
+        assert_eq!(rehome(&client, "not a url"), "not a url");
+        assert_eq!(
+            rehome(&client, "https://other.example/preview/"),
+            "https://www.example.com/preview/"
+        );
+        assert_eq!(
+            rehome(&client, "https://other.example/preview/?a=1"),
+            "https://www.example.com/preview/?a=1"
+        );
+        Ok(())
+    }
 }

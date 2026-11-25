@@ -56,8 +56,19 @@ impl Printer {
         pagination: Option<&Value>,
         columns: &[Column],
     ) -> Result<()> {
+        let mut out = io::stdout().lock();
+        self.write_list(&mut out, items, pagination, columns)
+    }
+
+    fn write_list(
+        self,
+        out: &mut impl Write,
+        items: &[Value],
+        pagination: Option<&Value>,
+        columns: &[Column],
+    ) -> Result<()> {
         if self.quiet {
-            return print_ids(items);
+            return write_ids(out, items);
         }
         match self.format {
             Format::Json => {
@@ -66,11 +77,11 @@ impl Printer {
                 if let Some(p) = pagination {
                     doc.insert("pagination".into(), p.clone());
                 }
-                print_json(&Value::Object(doc))
+                write_json(out, &Value::Object(doc))
             }
-            Format::Jsonl => print_jsonl(items),
+            Format::Jsonl => write_jsonl(out, items),
             Format::Table => {
-                print_table(items, columns)?;
+                write_table(out, items, columns)?;
                 if let Some(p) = pagination {
                     let page = p.get("page").and_then(Value::as_u64).unwrap_or(1);
                     let pages = p.get("total_pages").and_then(Value::as_u64).unwrap_or(1);
@@ -78,7 +89,6 @@ impl Printer {
                         .get("total")
                         .and_then(Value::as_u64)
                         .unwrap_or(items.len() as u64);
-                    let mut out = io::stdout().lock();
                     writeln!(out, "page {page} of {pages}, {total} total")?;
                 }
                 Ok(())
@@ -116,15 +126,23 @@ pub const fn col(header: &'static str, pointer: &'static str) -> Column {
 
 pub fn print_json(value: &Value) -> Result<()> {
     let mut out = io::stdout().lock();
-    serde_json::to_writer_pretty(&mut out, value)?;
+    write_json(&mut out, value)
+}
+
+fn write_json(out: &mut impl Write, value: &Value) -> Result<()> {
+    serde_json::to_writer_pretty(&mut *out, value)?;
     writeln!(out)?;
     Ok(())
 }
 
 fn print_jsonl(items: &[Value]) -> Result<()> {
     let mut out = io::stdout().lock();
+    write_jsonl(&mut out, items)
+}
+
+fn write_jsonl(out: &mut impl Write, items: &[Value]) -> Result<()> {
     for item in items {
-        serde_json::to_writer(&mut out, item)?;
+        serde_json::to_writer(&mut *out, item)?;
         writeln!(out)?;
     }
     Ok(())
@@ -132,6 +150,10 @@ fn print_jsonl(items: &[Value]) -> Result<()> {
 
 fn print_ids(items: &[Value]) -> Result<()> {
     let mut out = io::stdout().lock();
+    write_ids(&mut out, items)
+}
+
+fn write_ids(out: &mut impl Write, items: &[Value]) -> Result<()> {
     for item in items {
         match item.get("id") {
             Some(id) => writeln!(out, "{}", cell(id))?,
@@ -141,7 +163,7 @@ fn print_ids(items: &[Value]) -> Result<()> {
     Ok(())
 }
 
-fn print_table(items: &[Value], columns: &[Column]) -> Result<()> {
+fn write_table(out: &mut impl Write, items: &[Value], columns: &[Column]) -> Result<()> {
     let mut table = Table::new();
     table
         .load_style(UTF8_FULL_CONDENSED)
@@ -154,7 +176,6 @@ fn print_table(items: &[Value], columns: &[Column]) -> Result<()> {
                 .map(|c| cell(item.pointer(c.pointer).unwrap_or(&Value::Null))),
         );
     }
-    let mut out = io::stdout().lock();
     writeln!(out, "{table}")?;
     Ok(())
 }
@@ -162,6 +183,11 @@ fn print_table(items: &[Value], columns: &[Column]) -> Result<()> {
 /// Key/value view of a single resource. Long HTML fields are truncated in
 /// the table; use `-o json` for the full document.
 fn print_detail(value: &Value, columns: &[Column]) -> Result<()> {
+    let mut out = io::stdout().lock();
+    write_detail(&mut out, value, columns)
+}
+
+fn write_detail(out: &mut impl Write, value: &Value, columns: &[Column]) -> Result<()> {
     let mut table = Table::new();
     table
         .load_style(UTF8_FULL_CONDENSED)
@@ -182,13 +208,16 @@ fn print_detail(value: &Value, columns: &[Column]) -> Result<()> {
             }
         }
     }
-    let mut out = io::stdout().lock();
     writeln!(out, "{table}")?;
     Ok(())
 }
 
 fn print_flat(value: &Value) -> Result<()> {
     let mut out = io::stdout().lock();
+    write_flat(&mut out, value)
+}
+
+fn write_flat(out: &mut impl Write, value: &Value) -> Result<()> {
     let mut rows = Vec::new();
     flatten("", value, &mut rows);
     let mut table = Table::new();
@@ -268,6 +297,11 @@ fn truncate(text: &str) -> String {
 
 /// Print an error to stderr in the selected format.
 pub fn print_error(err: &Error, format: Format) {
+    let mut stderr = io::stderr().lock();
+    let _ = write_error(&mut stderr, err, format);
+}
+
+fn write_error(out: &mut impl Write, err: &Error, format: Format) -> io::Result<()> {
     match format {
         Format::Json | Format::Jsonl => {
             let mut doc = serde_json::Map::new();
@@ -290,29 +324,38 @@ pub fn print_error(err: &Error, format: Format) {
             }
             doc.insert("exit_code".into(), Value::from(err.exit_code()));
             let envelope = serde_json::json!({ "error": Value::Object(doc) });
-            eprintln!("{}", serde_json::to_string(&envelope).unwrap_or_default());
+            writeln!(
+                out,
+                "{}",
+                serde_json::to_string(&envelope).unwrap_or_default()
+            )
         }
         Format::Table => {
-            eprintln!("error: {}", sanitize(&err.to_string()));
+            writeln!(out, "error: {}", sanitize(&err.to_string()))?;
             if let Some(fields) = err.fields() {
                 for (name, messages) in fields {
                     for message in messages {
-                        eprintln!("  {}: {}", sanitize(name), sanitize(message));
+                        writeln!(out, "  {}: {}", sanitize(name), sanitize(message))?;
                     }
                 }
             }
             if let Some(retry) = err.retry_after() {
-                eprintln!("  retry after {retry}s");
+                writeln!(out, "  retry after {retry}s")?;
             }
             if let Some(hint) = err.hint() {
-                eprintln!("  hint: {}", sanitize(hint));
+                writeln!(out, "  hint: {}", sanitize(hint))?;
             }
+            Ok(())
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -320,25 +363,109 @@ mod tests {
         let title = Value::String("Hi\u{1b}]0;PWNED\u{7}\u{1b}[31m red\u{9b}2J\nnext\tcol".into());
         assert_eq!(cell(&title), "Hi]0;PWNED[31m red2J\nnext\tcol");
     }
-    use serde_json::json;
 
     #[test]
-    fn strips_terminal_escapes_from_field_names() {
-        let doc = json!({"evil\u{1b}]52;c;cHduZWQ=\u{7}": {"\u{1b}[2Jkey": "v"}});
-        let mut rows = Vec::new();
-        flatten("", &doc, &mut rows);
-        let shown: Vec<String> = rows.iter().map(|(k, _)| sanitize(k)).collect();
-        assert_eq!(shown, vec!["evil]52;c;cHduZWQ=.[2Jkey".to_string()]);
-        assert!(shown.iter().all(|k| !k.chars().any(char::is_control)));
+    fn flat_and_detail_tables_strip_terminal_escapes_from_server_keys() -> Result<()> {
+        let doc = json!({
+            "id": 1,
+            "evil\u{1b}]52;c;cHduZWQ=\u{7}": {"\u{1b}[2Jkey": "v"}
+        });
+        let mut flat = Vec::new();
+        write_flat(&mut flat, &doc)?;
+        let flat = String::from_utf8_lossy(&flat);
+        assert!(flat.contains("evil]52;c;cHduZWQ=.[2Jkey"), "{flat}");
+        assert!(
+            !flat.contains('\u{1b}') && !flat.contains('\u{7}'),
+            "{flat:?}"
+        );
+
+        let mut detail = Vec::new();
+        write_detail(&mut detail, &doc, &[col("id", "/id")])?;
+        let detail = String::from_utf8_lossy(&detail);
+        assert!(detail.contains("evil]52;c;cHduZWQ="), "{detail}");
+        assert!(
+            !detail.contains('\u{1b}') && !detail.contains('\u{7}'),
+            "{detail:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn list_renders_jsonl_ids_and_paginated_tables() -> Result<()> {
+        let items = vec![
+            json!({"id": 1, "title": "First"}),
+            json!({"id": 2, "title": "Second"}),
+        ];
+        let cols = &[col("id", "/id"), col("title", "/title")];
+
+        let mut jsonl = Vec::new();
+        Printer::new(Some(Format::Jsonl), false).write_list(&mut jsonl, &items, None, cols)?;
+        let lines: Vec<&str> = std::str::from_utf8(&jsonl)
+            .unwrap_or_default()
+            .lines()
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(serde_json::from_str::<Value>(lines[1])?["id"], 2);
+
+        let mut table = Vec::new();
+        Printer::new(Some(Format::Table), false).write_list(
+            &mut table,
+            &items,
+            Some(&json!({"page": 2, "total_pages": 5, "total": 42})),
+            cols,
+        )?;
+        let table = String::from_utf8_lossy(&table);
+        assert!(
+            table.contains("First") && table.contains("Second"),
+            "{table}"
+        );
+        assert!(table.contains("page 2 of 5, 42 total"), "{table}");
+
+        let mut ids = Vec::new();
+        write_ids(&mut ids, &[json!({"id": 7}), json!("bare")])?;
+        assert_eq!(String::from_utf8_lossy(&ids), "7\nbare\n");
+        Ok(())
+    }
+
+    #[test]
+    fn table_and_json_errors_include_fields_retry_and_hint() -> io::Result<()> {
+        let mut fields = BTreeMap::new();
+        fields.insert("slug\u{1b}[2J".into(), vec!["already taken\u{7}".into()]);
+        let err = Error::Api {
+            status: 409,
+            code: "conflict".into(),
+            message: "duplicate\u{1b}[31m".into(),
+            fields,
+            retry_after: Some(15),
+        };
+        let mut table = Vec::new();
+        write_error(&mut table, &err, Format::Table)?;
+        let table = String::from_utf8_lossy(&table);
+        assert!(table.contains("error: conflict: duplicate[31m"), "{table}");
+        assert!(table.contains("  slug[2J: already taken"), "{table}");
+        assert!(table.contains("  retry after 15s"), "{table}");
+        assert!(table.contains("  hint: "), "{table}");
+        assert!(!table.contains('\u{1b}') && !table.contains('\u{7}'));
+
+        let mut json_buf = Vec::new();
+        write_error(&mut json_buf, &err, Format::Json)?;
+        let parsed: Value = serde_json::from_slice(&json_buf).unwrap_or_default();
+        assert_eq!(parsed["error"]["retry_after"], 15);
+        assert_eq!(parsed["error"]["status"], 409);
+        assert_eq!(parsed["error"]["exit_code"], 6);
+        assert!(parsed["error"]["hint"].is_string());
+        Ok(())
     }
 
     #[test]
     fn cells_summarise_nested_values() {
         assert_eq!(
-            cell(&json!([{"id": 1, "slug": "a"}, {"id": 2, "slug": "b"}])),
-            "a, b"
+            cell(&json!([{"id": 1, "slug": "a"}, {"id": 2, "name": "b"}, {"x": 1}])),
+            "a, b, {\"x\":1}"
         );
         assert_eq!(cell(&json!({"id": 3, "slug": "p", "path": "/p/"})), "/p/");
+        assert_eq!(cell(&json!({"id": 3, "name": "n"})), "n");
+        assert_eq!(cell(&json!({"raw": 1})), "{\"raw\":1}");
         assert_eq!(cell(&json!(null)), "");
         assert_eq!(cell(&json!(true)), "true");
     }

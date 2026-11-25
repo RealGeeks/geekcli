@@ -154,6 +154,15 @@ pub fn redeem(anon: &Client, code: &str, verifier: &str) -> Result<Value> {
 
 /// Whole flow for the command: start, open the browser, wait, redeem.
 pub fn login(anon: &Client, request: &LoginRequest, open_browser: bool) -> Result<Value> {
+    login_with(anon, request, open_browser, |url| open::that(url))
+}
+
+fn login_with(
+    anon: &Client,
+    request: &LoginRequest,
+    open_browser: bool,
+    opener: impl FnOnce(&str) -> std::io::Result<()>,
+) -> Result<Value> {
     let pending = start(anon, request)?;
     if open_browser {
         eprintln!(
@@ -161,7 +170,7 @@ pub fn login(anon: &Client, request: &LoginRequest, open_browser: bool) -> Resul
             pending.expires_in / 60,
             pending.authorize_url
         );
-        if open::that(pending.authorize_url.as_str()).is_err() {
+        if opener(pending.authorize_url.as_str()).is_err() {
             eprintln!(
                 "Could not open a browser automatically. Open the URL above in an already signed-in browser."
             );
@@ -379,5 +388,87 @@ mod tests {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
         );
+    }
+
+    #[test]
+    fn check_authorize_url_rejects_unparseable_and_hostless_urls() {
+        assert!(check_authorize_url("not a url", "https://example.com/a").is_err());
+        assert!(check_authorize_url("https://example.com", ":::bad").is_err());
+        assert!(check_authorize_url("mailto:a@b", "https://example.com/a").is_err());
+    }
+
+    #[test]
+    fn login_with_open_browser_handles_success_and_opener_failure() -> Result<()> {
+        for opener_fails in [false, true] {
+            let mut server = mockito::Server::new();
+            // Echo the port the CLI bound (port 0, so the OS picked it) in the
+            // approval URL; the opener reads it from there, so no port is guessed.
+            let approve = format!("{}/approve/", server.url());
+            server
+                .mock("POST", "/api/v3/auth/cli/start/")
+                .with_status(201)
+                .with_body_from_request(move |request| {
+                    let port = request
+                        .body()
+                        .ok()
+                        .and_then(|b| serde_json::from_slice::<Value>(b).ok())
+                        .and_then(|b| b["port"].as_u64())
+                        .unwrap_or_default();
+                    format!(
+                        r#"{{"request_id":"req-open","authorize_url":"{approve}?port={port}","expires_in":5}}"#
+                    )
+                    .into()
+                })
+                .create();
+            server
+                .mock("POST", "/api/v3/auth/cli/token/")
+                .with_status(201)
+                .with_body(r#"{"api_key":"rg_live_opened"}"#)
+                .create();
+
+            let target = crate::config::Target {
+                domain: "www.test.local".into(),
+                base_url: server.url(),
+                api_key: None,
+            };
+            let anon = Client::new(&target, 0, false)?;
+            let req = LoginRequest {
+                name: "Test".into(),
+                scopes: vec!["blog:write".into()],
+                port: None,
+                state: Some("st-open".into()),
+            };
+            let opened = std::cell::Cell::new(false);
+            let mut cb_handle = None;
+            let res = login_with(&anon, &req, true, |url| {
+                opened.set(true);
+                let port: u16 = url
+                    .rsplit_once("port=")
+                    .and_then(|(_, p)| p.parse().ok())
+                    .unwrap_or_default();
+                cb_handle = Some(std::thread::spawn(move || {
+                    if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+                        let _ = write!(
+                            s,
+                            "GET /callback?code=c&state=st-open HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                        );
+                        let _ = s.flush();
+                        let mut sink = [0u8; 256];
+                        let _ = s.read(&mut sink);
+                    }
+                }));
+                if opener_fails {
+                    Err(std::io::Error::other("no browser"))
+                } else {
+                    Ok(())
+                }
+            })?;
+            if let Some(handle) = cb_handle {
+                let _ = handle.join();
+            }
+            assert!(opened.get());
+            assert_eq!(res["api_key"], "rg_live_opened");
+        }
+        Ok(())
     }
 }

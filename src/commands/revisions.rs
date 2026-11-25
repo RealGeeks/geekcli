@@ -321,6 +321,40 @@ mod tests {
         assert_eq!(row("styles")["restored"], "coastal: brand=#000");
         assert_eq!(row("sidebar")["now"], Value::Null);
         assert_eq!(row("sidebar")["restored"], "Blog Sidebar");
+        assert_eq!(preview_rows(&json!({})), Vec::<Value>::new());
+        assert_eq!(
+            preview_rows(&json!({"preview": "bad"})),
+            Vec::<Value>::new()
+        );
+
+        // alternate API key spellings (`current` / `previous`) in both map and list previews
+        let alt_map = preview_rows(&json!({
+            "preview": { "title": { "current": "Now", "previous": "Before" } }
+        }));
+        assert_eq!(alt_map[0]["now"], "Now");
+        assert_eq!(alt_map[0]["restored"], "Before");
+        let alt_list = preview_rows(&json!({
+            "preview": [
+                { "field": "title", "current": "Now", "previous": "Before" },
+                { "field": "slug", "now": "s2", "after_revert": "s1" }
+            ]
+        }));
+        assert_eq!(alt_list[0]["now"], "Now");
+        assert_eq!(alt_list[0]["restored"], "Before");
+        assert_eq!(alt_list[1]["restored"], "s1");
+
+        // long string (> 90 chars), long html entry (> 30 chars), fallback unknown object
+        let long_str = "a".repeat(120);
+        let summarised = summarise(Some(&json!(long_str)));
+        assert!(summarised
+            .as_str()
+            .is_some_and(|s| s.ends_with("… (120 chars)")));
+        let long_html =
+            json!({"html": "<p>This is a fairly long paragraph inside a sidebar block</p>"});
+        let html_sum = summarise(Some(&long_html));
+        assert!(html_sum.as_str().is_some_and(|s| s.ends_with('…')));
+        let mystery = summarise(Some(&json!({"opaque": 42})));
+        assert_eq!(mystery, json!(r#"{"opaque":42}"#));
     }
 
     #[test]
@@ -328,12 +362,14 @@ mod tests {
         let tiles: Vec<Value> = (0..40)
             .map(|n| json!({ "title": format!("Neighborhood {n}") }))
             .collect();
-        let Value::String(text) = summarise(Some(&Value::Array(tiles))) else {
-            return;
-        };
-        assert!(text.starts_with("40 entries: Neighborhood 0, "));
-        assert!(text.ends_with('…'));
-        assert_eq!(text.chars().count(), PREVIEW_CHARS + 1);
+        let out = summarise(Some(&Value::Array(tiles)));
+        let text = out.as_str();
+        assert!(
+            text.is_some_and(|t| t.starts_with("40 entries: Neighborhood 0, ")
+                && t.ends_with('…')
+                && t.chars().count() == PREVIEW_CHARS + 1),
+            "unexpected summary: {out:?}"
+        );
     }
 
     #[test]

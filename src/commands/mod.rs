@@ -31,7 +31,7 @@ pub mod templates;
 pub mod update;
 pub mod valuation_pages;
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 
 use serde_json::{Map, Value};
 
@@ -248,10 +248,18 @@ pub fn confirm(ctx: &Context, what: &str) -> Result<bool> {
     if ctx.yes || !io::stdin().is_terminal() {
         return Ok(true);
     }
-    eprint!("Delete {what}? [y/N] ");
-    io::stderr().flush()?;
+    confirm_prompt(what, &mut io::stdin().lock(), &mut io::stderr().lock())
+}
+
+fn confirm_prompt(
+    what: &str,
+    input: &mut impl io::BufRead,
+    err: &mut impl io::Write,
+) -> Result<bool> {
+    write!(err, "Delete {what}? [y/N] ")?;
+    err.flush()?;
     let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
+    input.read_line(&mut answer)?;
     Ok(matches!(
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
@@ -313,5 +321,63 @@ mod tests {
         assert_eq!(parse_id_or_null("null"), Ok(Value::Null));
         assert_eq!(parse_id_or_null("12"), Ok(json!(12)));
         assert!(parse_id_or_null("abc").is_err());
+    }
+
+    #[test]
+    fn merge_json_reads_at_file_and_helpers_validate_ids_and_flags() -> std::io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("extra.json");
+        std::fs::write(&path, r#"{"meta_keywords": "a, b", "title": "from-file"}"#)?;
+        let mut p = Payload::default();
+        p.set("title", Some("from-flag"));
+        assert!(p.merge_json(Some(&format!("@{}", path.display()))).is_ok());
+        assert_eq!(
+            p.into_value(),
+            json!({"title": "from-flag", "meta_keywords": "a, b"})
+        );
+
+        let mut query = Query::new();
+        push_flag(&mut query, "force", false);
+        assert_eq!(query, Vec::<(String, String)>::new());
+        push_flag(&mut query, "force", true);
+        assert_eq!(query, vec![("force".to_string(), "true".to_string())]);
+
+        assert_eq!(id_of(&json!({"id": 42})).ok(), Some(42));
+        assert!(matches!(id_of(&json!({})), Err(Error::Other(_))));
+
+        let paging = Paging {
+            page: Some(2),
+            page_size: Some(50),
+            all: false,
+            ordering: Some("-id".into()),
+        };
+        let mut paged = Query::new();
+        paging.apply(&mut paged);
+        assert_eq!(
+            paged,
+            vec![
+                ("page".into(), "2".into()),
+                ("page_size".into(), "50".into()),
+                ("ordering".into(), "-id".into()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn confirm_prompt_parses_yes_no_and_eof() -> Result<()> {
+        for (input, expected) in [
+            ("y\n", true),
+            ("YES\n", true),
+            ("n\n", false),
+            ("\n", false),
+            ("", false),
+        ] {
+            let mut reader = std::io::Cursor::new(input.as_bytes());
+            let mut err = Vec::new();
+            assert_eq!(confirm_prompt("item 1", &mut reader, &mut err)?, expected);
+            assert_eq!(String::from_utf8_lossy(&err), "Delete item 1? [y/N] ");
+        }
+        Ok(())
     }
 }

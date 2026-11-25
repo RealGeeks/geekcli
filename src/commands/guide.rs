@@ -54,6 +54,47 @@ fn line_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
+const ALIASES: &[(&str, &str)] = &[
+    ("html", "content that renders"),
+    ("sanitizer", "content that renders"),
+    ("css", "content that renders"),
+    ("style", "content that renders"),
+    ("layout", "content that renders"),
+    ("rebrand", "rebranding"),
+    ("branding", "rebranding"),
+    ("logo", "rebranding"),
+    ("auth", "setup"),
+    ("login", "setup"),
+    ("errors", "exit codes"),
+    ("exit", "exit codes"),
+    ("json", "output"),
+    ("criteria", "search"),
+    ("links", "search"),
+    ("polygon", "property-search"),
+    ("map", "property-search"),
+    ("nav", "navigation"),
+    ("screenshot", "snapshots"),
+    ("workflow", "workflow"),
+    ("api", "anything else"),
+    ("support", "support articles"),
+    ("design guidance", "design guidance"),
+    ("guidance", "design guidance"),
+    ("docs", "support articles"),
+    ("articles", "support articles"),
+    ("raw", "anything else"),
+    ("update", "updating geekcli"),
+    ("upgrade", "updating geekcli"),
+    ("version", "updating geekcli"),
+    ("revert", "revisions and undo"),
+    ("history", "revisions and undo"),
+    ("restore", "files"),
+    ("search-forms", "search forms"),
+    ("forms", "search forms"),
+    ("tabs", "search forms"),
+    ("modules", "alfred"),
+    ("sections", "alfred"),
+];
+
 /// Sections matching a topic: by number, else by a case-insensitive word
 /// in the title (with a few aliases agents are likely to reach for).
 pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
@@ -66,47 +107,7 @@ pub fn find(all: &[Section<'_>], topic: &str) -> Vec<usize> {
             .map(|(i, _)| i)
             .collect();
     }
-    let aliases: &[(&str, &str)] = &[
-        ("html", "content that renders"),
-        ("sanitizer", "content that renders"),
-        ("css", "content that renders"),
-        ("style", "content that renders"),
-        ("layout", "content that renders"),
-        ("rebrand", "rebranding"),
-        ("branding", "rebranding"),
-        ("logo", "rebranding"),
-        ("auth", "setup"),
-        ("login", "setup"),
-        ("errors", "exit codes"),
-        ("exit", "exit codes"),
-        ("json", "output"),
-        ("criteria", "search"),
-        ("links", "search"),
-        ("polygon", "property-search"),
-        ("map", "property-search"),
-        ("nav", "navigation"),
-        ("screenshot", "snapshots"),
-        ("workflow", "workflow"),
-        ("api", "anything else"),
-        ("support", "support articles"),
-        ("design guidance", "design guidance"),
-        ("guidance", "design guidance"),
-        ("docs", "support articles"),
-        ("articles", "support articles"),
-        ("raw", "anything else"),
-        ("update", "updating geekcli"),
-        ("upgrade", "updating geekcli"),
-        ("version", "updating geekcli"),
-        ("revert", "revisions and undo"),
-        ("history", "revisions and undo"),
-        ("restore", "files"),
-        ("search-forms", "search forms"),
-        ("forms", "search forms"),
-        ("tabs", "search forms"),
-        ("modules", "alfred"),
-        ("sections", "alfred"),
-    ];
-    let needle = aliases
+    let needle = ALIASES
         .iter()
         .find(|(k, _)| *k == wanted)
         .map_or(wanted.as_str(), |(_, v)| v);
@@ -174,25 +175,26 @@ mod tests {
     }
 
     #[test]
-    fn real_guide_has_the_expected_topics() {
+    fn real_guide_has_the_expected_topics_and_every_alias_resolves() {
         let all = sections(crate::GUIDE);
+        for (alias, _) in ALIASES {
+            assert!(
+                !find(&all, alias).is_empty(),
+                "alias {alias:?} matched nothing"
+            );
+        }
         for topic in [
-            "html",
-            "rebrand",
-            "search",
-            "polygon",
-            "map",
-            "snapshots",
+            "alfred",
             "settings",
             "files",
             "footers",
             "banners",
             "market",
             "valuation",
-            "workflow",
-            "update",
         ] {
             assert!(!find(&all, topic).is_empty(), "no section for {topic}");
         }
+        let alfred = find(&all, "alfred");
+        assert!(all[alfred[0]].body.contains("items set tile"));
     }
 }

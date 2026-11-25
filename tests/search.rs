@@ -2,6 +2,8 @@
 //! checking with ignored keys, running a search, and page saved searches.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Server, ServerGuard};
 use predicates::prelude::*;
@@ -11,14 +13,8 @@ const FORM: &str = r#"{"primary":[{"attr":"city","label":"City","widget_type":"m
 "secondary":[{"attr":"type","label":"Home","widget_type":"checkbox","default_value":true,"value":"res"},{"attr":"type","label":"Condo","widget_type":"checkbox","default_value":true,"value":"con"},{"attr":"list_price_min","label":"Minimum Price","widget_type":"select","default_value":"all","choices":[["all","No Limit"],[1000000,"$1,000,000"]]}]}"#;
 
 fn cmd(server: &ServerGuard, dir: &tempfile::TempDir) -> Command {
-    let mut c = Command::cargo_bin("geekcli").unwrap();
-    c.env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("GEEKCLI_SITE", "www.test.local")
+    let mut c = common::geekcli();
+    c.env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_BASE_URL", server.url())
         .env("GEEKCLI_CONFIG_DIR", dir.path());
     c
@@ -927,4 +923,164 @@ fn check_validates_values_against_the_catalog() {
         doc["values_checked"],
         serde_json::json!(["city", "type", "subdivision"])
     );
+}
+
+#[test]
+fn fields_table_choices_filters_and_run_url_edge_cases() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+
+    // catalog table mode
+    let cat = mock_catalog(&mut server);
+    cmd(&server, &dir)
+        .args(["-o", "table", "search", "fields"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("list_price_min"))
+        .stderr(predicate::str::contains("range fields are searched"));
+    cat.assert();
+
+    // form fallback table mode merges repeated checkbox rows for `type`
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect_at_least(2)
+        .create();
+    cmd(&server, &dir)
+        .args(["-o", "table", "search", "fields"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Property type").and(predicate::str::contains("res, con")),
+        );
+
+    // choices polygon refused; choices -s filters; --all with no match exits 4
+    cmd(&server, &dir)
+        .args(["search", "choices", "polygon"])
+        .assert()
+        .code(2);
+    let out = cmd(&server, &dir)
+        .args(["search", "choices", "city", "-s", "biscayne"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results"].as_array().map(Vec::len), Some(1));
+
+    // catalog field with no fixed values prints guidance note
+    let mut cat_server = Server::new();
+    cat_server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_body(CATALOG)
+        .create();
+    cat_server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_status(404)
+        .create();
+    cmd(&cat_server, &dir)
+        .args(["search", "choices", "view"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("has no fixed list of values"));
+
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_body(AUTOCOMPLETE)
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "choices", "city", "--all", "-s", "zzzz"])
+        .assert()
+        .code(4);
+
+    // run: invalid --sort exits 2; non-strict warns on ignored; table mode prints singular/limited count
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"in Miami","criteria":{"city":["Miami"]}}"#)
+        .expect_at_least(3)
+        .create();
+    cmd(&server, &dir)
+        .args(["search", "run", "city=Miami", "--sort", "bogus"])
+        .assert()
+        .code(2);
+    server
+        .mock("GET", "/api/v2/search/")
+        .match_query(Matcher::Any)
+        .with_header("x-total-count", "1")
+        .with_header("x-total-count-limited", "mls_cap")
+        .with_header("x-description", "Homes in <b>Miami</b>")
+        .with_body(r#"[{"board":1,"type":"res","fields":{"address":{"data":"1 Main"},"list_price":{"data":"$1M","raw":1000000},"url":{"data":"/p/1/"}}}]"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["-o", "table", "search", "run", "city=Miami", "unknown=1"])
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("warning: the site ignored: unknown")
+                .and(predicate::str::contains("Homes in Miami"))
+                .and(predicate::str::contains(
+                    "1 matching property (count limited by mls_cap)",
+                )),
+        );
+
+    // url without --save and with ignored criteria exits 5 after printing doc
+    let out = cmd(&server, &dir)
+        .args(["search", "url", "city=Miami", "unknown=1"])
+        .assert()
+        .code(5)
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results_path"], "/search/results/?city=Miami");
+}
+
+#[test]
+fn check_handles_autocomplete_error_and_combined_ignored_and_value_warnings() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    server
+        .mock("GET", "/api/v2/search/metadata/")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"description":"d","criteria":{"city":["UnknownCity"]}}"#)
+        .expect(2)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/dump_uberform_fields.json")
+        .with_status(404)
+        .create();
+    server
+        .mock("GET", "/search_forms/api/advanced_search_form.json")
+        .with_body(FORM)
+        .expect(2)
+        .create();
+    server
+        .mock("GET", "/api/v2/search/autocomplete-options/")
+        .with_status(500)
+        .expect(2)
+        .create();
+
+    // non-strict warns that autocomplete could not be read and still reports form mismatch
+    cmd(&server, &dir)
+        .args(["search", "check", "city=UnknownCity"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("values not checked"));
+
+    // ignored criterion merges value warnings into the error fields
+    let out = cmd(&server, &dir)
+        .args(["search", "check", "city=UnknownCity", "bad_key=1"])
+        .assert()
+        .code(5)
+        .get_output()
+        .stderr
+        .clone();
+    let err = parse(&out);
+    assert_eq!(err["error"]["code"], "ignored_criteria");
+    assert!(err["error"]["fields"].get("bad_key").is_some());
+    assert!(err["error"]["fields"].get("city").is_some());
 }

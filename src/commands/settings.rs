@@ -340,6 +340,18 @@ mod tests {
         assert_eq!(coerce("hello", &def("string")).ok(), Some(json!("hello")));
         assert_eq!(coerce("null", &def("string")).ok(), Some(Value::Null));
         assert!(coerce("abc", &def("integer")).is_err());
+        assert!(coerce("maybe", &def("boolean")).is_err());
+        assert!(coerce("1, nope", &def("integer_list")).is_err());
+        assert!(coerce("[bad", &def("list")).is_err());
+        assert!(coerce("not json", &def("object")).is_err());
+        assert_eq!(
+            coerce("key: value", &def("yaml")).ok(),
+            Some(json!("key: value"))
+        );
+        assert_eq!(
+            coerce(r#"["a","b"]"#, &def("yaml")).ok(),
+            Some(json!(["a", "b"]))
+        );
     }
 
     #[test]

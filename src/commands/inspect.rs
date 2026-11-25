@@ -99,19 +99,19 @@ pub fn run(ctx: &Context, args: &InspectArgs) -> Result<()> {
         if let Some(selector) = &args.text {
             let value = element(tab, selector)?
                 .get_inner_text()
-                .map_err(|error| browser_error(&error))?;
+                .map_err(browser_error)?;
             Ok(json!({"operation": "text", "selector": selector, "value": value}))
         } else if let Some(selector) = &args.html {
             let value = element(tab, selector)?
                 .get_content()
-                .map_err(|error| browser_error(&error))?;
+                .map_err(browser_error)?;
             Ok(json!({"operation": "html", "selector": selector, "value": value}))
         } else if let Some(values) = &args.attr {
             let selector = &values[0];
             let name = &values[1];
             let attributes = element(tab, selector)?
                 .get_attributes()
-                .map_err(|error| browser_error(&error))?;
+                .map_err(browser_error)?;
             let value = attributes.and_then(|attributes| {
                 attributes
                     .as_chunks::<2>()
@@ -132,7 +132,7 @@ pub fn run(ctx: &Context, args: &InspectArgs) -> Result<()> {
             let value = tab
                 .find_element(selector)
                 .ok()
-                .map(|element| element.is_visible().map_err(|error| browser_error(&error)))
+                .map(|element| element.is_visible().map_err(browser_error))
                 .transpose()?
                 .unwrap_or(false);
             Ok(json!({"operation": "visible", "selector": selector, "value": value}))
@@ -180,11 +180,25 @@ fn selector_count(tab: &headless_chrome::Tab, selector: &str) -> Result<u64> {
 
 fn evaluate(tab: &headless_chrome::Tab, expression: &str) -> Result<Value> {
     tab.evaluate(expression, true)
-        .map_err(|error| browser_error(&error))?
+        .map_err(browser_error)?
         .value
         .ok_or_else(|| Error::Other("JavaScript did not return a JSON value".into()))
 }
 
-fn browser_error(error: &anyhow::Error) -> Error {
-    Error::Other(format!("browser query failed: {error}"))
+fn browser_error(error: anyhow::Error) -> Error {
+    Error::Other(format!(
+        "browser query failed: {}",
+        error.into_boxed_dyn_error()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_error_formats_underlying_cause() {
+        let err = browser_error(anyhow::anyhow!("tab crashed"));
+        assert!(matches!(err, Error::Other(m) if m == "browser query failed: tab crashed"));
+    }
 }

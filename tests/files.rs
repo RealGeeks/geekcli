@@ -1,20 +1,16 @@
 //! `geekcli files …` against a mock site.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use assert_cmd::Command;
 use mockito::{Matcher, Server, ServerGuard};
 use predicates::prelude::*;
 use serde_json::{json, Value};
 
 fn cmd(server: &ServerGuard, dir: &tempfile::TempDir) -> Command {
-    let mut c = Command::cargo_bin("geekcli").unwrap();
-    c.env_clear()
-        .env(
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        )
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("GEEKCLI_SITE", "www.test.local")
+    let mut c = common::geekcli();
+    c.env("GEEKCLI_SITE", "www.test.local")
         .env("GEEKCLI_API_KEY", "rg_live_k")
         .env("GEEKCLI_BASE_URL", server.url())
         .env("GEEKCLI_CONFIG_DIR", dir.path());
@@ -334,4 +330,165 @@ fn upload_checks_the_extension_of_name() {
         .code(2)
         .stderr(predicate::str::contains("page.html: type not accepted"));
     mock.assert();
+}
+
+#[test]
+fn list_search_page_size_table_and_get_table() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let list = server
+        .mock("GET", "/api/v3/files/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("path".into(), "images".into()),
+            Matcher::UrlEncoded("q".into(), "logo".into()),
+            Matcher::UrlEncoded("page_size".into(), "10".into()),
+        ]))
+        .with_body(format!(
+            r#"{{"path":"images","results":[{LOGO}],"next_cursor":"next1"}}"#
+        ))
+        .expect(2)
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["files", "list", "images", "-s", "logo", "--page-size", "10"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["next_cursor"], "next1");
+    cmd(&server, &dir)
+        .args([
+            "-o",
+            "table",
+            "files",
+            "list",
+            "images",
+            "-s",
+            "logo",
+            "--page-size",
+            "10",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("400x200"))
+        .stderr(predicate::str::contains("more entries: --cursor next1"));
+    list.assert();
+
+    server
+        .mock("GET", "/api/v3/files/images/logo.png/")
+        .with_body(LOGO)
+        .create();
+    cmd(&server, &dir)
+        .args(["-o", "table", "files", "get", "images/logo.png"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("400x200"));
+}
+
+#[test]
+fn upload_multiple_files_from_url_options_and_edge_errors() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.png");
+    let b = dir.path().join("b.png");
+    std::fs::write(&a, b"\x89PNG a").unwrap();
+    std::fs::write(&b, b"\x89PNG b").unwrap();
+
+    // --name refused for multiple files
+    cmd(&server, &dir)
+        .args(["files", "upload", "--name", "only.png"])
+        .arg(&a)
+        .arg(&b)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("single file"));
+
+    // directory and missing file refused before any request
+    let sub = dir.path().join("sub.png");
+    std::fs::create_dir(&sub).unwrap();
+    cmd(&server, &dir)
+        .args(["files", "upload"])
+        .arg(&sub)
+        .arg(dir.path().join("missing.png"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("not a file"))
+        .stderr(predicate::str::contains("cannot read"));
+
+    let upload = server
+        .mock("POST", "/api/v3/files/upload/")
+        .with_status(201)
+        .with_body(LOGO)
+        .expect(4)
+        .create();
+    let out = cmd(&server, &dir)
+        .args(["files", "upload"])
+        .arg(&a)
+        .arg(&b)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(parse(&out)["results"].as_array().map(Vec::len), Some(2));
+    cmd(&server, &dir)
+        .args(["-q", "files", "upload"])
+        .arg(&a)
+        .arg(&b)
+        .assert()
+        .success()
+        .stdout(
+            "https://u.realgeeks.media/example/images/logo.png\n\
+             https://u.realgeeks.media/example/images/logo.png\n",
+        );
+    upload.assert();
+
+    // --from-url with explicit --name, --content-type and --overwrite
+    let from_url = server
+        .mock("POST", "/api/v3/files/upload/")
+        .match_body(Matcher::Json(json!({
+            "path": "",
+            "name": "custom.png",
+            "content_url": "https://u.realgeeks.media/example/raw",
+            "content_type": "image/png",
+            "overwrite": true
+        })))
+        .with_status(201)
+        .with_body(LOGO)
+        .create();
+    cmd(&server, &dir)
+        .args([
+            "files",
+            "upload",
+            "--from-url",
+            "https://u.realgeeks.media/example/raw",
+            "--name",
+            "custom.png",
+            "--content-type",
+            "image/png",
+            "--overwrite",
+        ])
+        .assert()
+        .success();
+    from_url.assert();
+
+    // empty paths refused on versions and restore; folder restore prints path under -q
+    cmd(&server, &dir)
+        .args(["files", "versions", "/"])
+        .assert()
+        .code(2);
+    cmd(&server, &dir)
+        .args(["files", "restore", "/"])
+        .assert()
+        .code(2);
+    server
+        .mock("POST", "/api/v3/files/restore/")
+        .match_body(Matcher::Json(json!({ "path": "images/old" })))
+        .with_body(r#"{"restored":[{"name":"old","path":"images/old","type":"folder"}],"incomplete":false}"#)
+        .create();
+    cmd(&server, &dir)
+        .args(["-q", "files", "restore", "images/old"])
+        .assert()
+        .success()
+        .stdout("images/old\n");
 }
