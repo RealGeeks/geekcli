@@ -297,10 +297,11 @@ fn default_key_name_from(
     computername: Option<String>,
     fallback_cmd: impl FnOnce() -> Option<String>,
 ) -> String {
+    let set = |h: &String| !h.is_empty();
     let host = hostname
-        .or(computername)
-        .or_else(fallback_cmd)
-        .filter(|h| !h.is_empty())
+        .filter(set)
+        .or_else(|| computername.filter(set))
+        .or_else(|| fallback_cmd().filter(set))
         .unwrap_or_else(|| "unknown host".to_string());
     let name = format!("Real Geeks CLI on {host}");
     name.chars().take(100).collect()
@@ -438,6 +439,15 @@ mod tests {
         assert_eq!(
             default_key_name_from(None, None, || Some(String::new())),
             "Real Geeks CLI on unknown host"
+        );
+        // an empty HOSTNAME falls through to the next source
+        assert_eq!(
+            default_key_name_from(Some(String::new()), Some("WINBOX".into()), || None),
+            "Real Geeks CLI on WINBOX"
+        );
+        assert_eq!(
+            default_key_name_from(Some(String::new()), None, || Some("laptop".into())),
+            "Real Geeks CLI on laptop"
         );
         let long = default_key_name_from(Some("a".repeat(120)), None, || None);
         assert_eq!(long.chars().count(), 100);

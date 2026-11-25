@@ -48,10 +48,17 @@ pub struct SiteConfig {
     pub aliases: Vec<String>,
 }
 
-pub fn config_dir() -> Result<PathBuf> {
+/// Where the config lives: a directory set with `GEEKCLI_CONFIG_DIR`, or the
+/// base folder (`~/.config`, honouring `XDG_CONFIG_HOME`) that holds it.
+enum Location {
+    Explicit(PathBuf),
+    Base(PathBuf),
+}
+
+fn location() -> Result<Location> {
     if let Ok(dir) = std::env::var(CONFIG_DIR_ENV) {
         if !dir.is_empty() {
-            return Ok(PathBuf::from(dir));
+            return Ok(Location::Explicit(PathBuf::from(dir)));
         }
     }
     // ~/.config on every platform (honouring XDG_CONFIG_HOME), like most
@@ -62,7 +69,24 @@ pub fn config_dir() -> Result<PathBuf> {
             .ok_or_else(|| Error::Config("cannot determine the home directory".into()))?
             .join(".config"),
     };
-    Ok(migrate_legacy_dir(&base))
+    Ok(Location::Base(base))
+}
+
+pub fn config_dir() -> Result<PathBuf> {
+    Ok(match location()? {
+        Location::Explicit(dir) => dir,
+        Location::Base(base) => migrate_legacy_dir(&base),
+    })
+}
+
+/// The config file in use, found without moving a legacy one: for checks
+/// (such as which local files may be sent) that must not touch the disk.
+pub fn config_path_in_use() -> Result<PathBuf> {
+    let dir = match location()? {
+        Location::Explicit(dir) => dir,
+        Location::Base(base) => dir_in_use(&base),
+    };
+    Ok(dir.join("config.toml"))
 }
 
 /// The CLI was called `realgeeks` before it was `geekcli`. Move a config left
@@ -70,11 +94,22 @@ pub fn config_dir() -> Result<PathBuf> {
 /// the old directory if the move fails rather than losing the stored keys.
 fn migrate_legacy_dir(base: &Path) -> PathBuf {
     let dir = base.join("geekcli");
-    let legacy = base.join("realgeeks");
-    if !dir.exists() && legacy.join("config.toml").is_file() && fs::rename(&legacy, &dir).is_err() {
-        return legacy;
+    let in_use = dir_in_use(base);
+    if in_use != dir && fs::rename(&in_use, &dir).is_err() {
+        return in_use;
     }
     dir
+}
+
+/// `geekcli`, or the legacy `realgeeks` while it still holds the only config.
+fn dir_in_use(base: &Path) -> PathBuf {
+    let dir = base.join("geekcli");
+    let legacy = base.join("realgeeks");
+    if !dir.exists() && legacy.join("config.toml").is_file() {
+        legacy
+    } else {
+        dir
+    }
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -610,6 +645,20 @@ mod tests {
     }
 
     #[test]
+    fn dir_in_use_finds_a_legacy_config_without_moving_it() -> std::io::Result<()> {
+        let base = tempfile::tempdir()?;
+        assert_eq!(dir_in_use(base.path()), base.path().join("geekcli"));
+        fs::create_dir(base.path().join("realgeeks"))?;
+        fs::write(base.path().join("realgeeks/config.toml"), "")?;
+
+        assert_eq!(dir_in_use(base.path()), base.path().join("realgeeks"));
+        // looking is read-only: the legacy dir is still there, not migrated
+        assert!(base.path().join("realgeeks/config.toml").is_file());
+        assert!(!base.path().join("geekcli").exists());
+        Ok(())
+    }
+
+    #[test]
     fn leaves_the_old_dir_alone_once_the_new_one_exists() -> std::io::Result<()> {
         let base = tempfile::tempdir()?;
         fs::create_dir_all(base.path().join("realgeeks"))?;
@@ -930,15 +979,16 @@ mod tests {
         assert_eq!(tighten_one(&link, 0o600), None);
         assert_eq!(fs::metadata(&target)?.permissions().mode() & 0o777, 0o644);
 
-        // Read-only base prevents renaming legacy `realgeeks` -> `geekcli`, so legacy is kept
-        let ro_base = tempfile::tempdir()?;
-        let legacy = ro_base.path().join("realgeeks");
+        // A dangling `geekcli` symlink does not "exist", but renaming a
+        // directory onto it fails (ENOTDIR), even as root, so legacy is kept.
+        let base = tempfile::tempdir()?;
+        let legacy = base.path().join("realgeeks");
         fs::create_dir(&legacy)?;
         fs::write(legacy.join("config.toml"), "default_site = \"a.com\"\n")?;
-        fs::set_permissions(ro_base.path(), fs::Permissions::from_mode(0o555))?;
-        let chosen = migrate_legacy_dir(ro_base.path());
-        fs::set_permissions(ro_base.path(), fs::Permissions::from_mode(0o755))?;
+        std::os::unix::fs::symlink(base.path().join("nowhere"), base.path().join("geekcli"))?;
+        let chosen = migrate_legacy_dir(base.path());
         assert_eq!(chosen, legacy);
+        assert!(legacy.join("config.toml").is_file());
         Ok(())
     }
 }

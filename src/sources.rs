@@ -62,7 +62,7 @@ pub fn why_refused(path: &Path) -> Option<String> {
         return None;
     }
     let home = dirs::home_dir();
-    let config_file = config::config_path().ok();
+    let config_file = config::config_path_in_use().ok();
     refusal(path, home.as_deref(), config_file.as_deref())
 }
 

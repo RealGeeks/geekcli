@@ -458,32 +458,33 @@ fn strip_html(text: &str) -> String {
 }
 
 fn sidebar_heading(sidebar: &Value) -> String {
-    let used = sidebar
+    // `used_by` holds at most 500 slugs and `used_by_count` the real total;
+    // trust whichever is larger, so neither a stale count nor a missing list
+    // makes a sidebar in use look unused.
+    let pages: &[Value] = sidebar
         .get("used_by")
         .and_then(Value::as_array)
-        .and_then(|pages| {
-            // `used_by` holds at most 500 slugs; `used_by_count` is the real total
-            let total = sidebar
-                .get("used_by_count")
-                .and_then(Value::as_u64)
-                .and_then(|n| usize::try_from(n).ok())
-                .unwrap_or(pages.len());
-            if total == 0 {
-                return None;
-            }
-            let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
-            if shown.is_empty() {
-                return Some(format!("{total} page(s)"));
-            }
-            let more = total.saturating_sub(shown.len());
-            let tail = if more > 0 {
-                format!(", +{more} more")
-            } else {
-                String::new()
-            };
-            Some(format!("{total} page(s): {}{tail}", shown.join(", ")))
-        })
-        .unwrap_or_default();
+        .map_or(&[], Vec::as_slice);
+    let count = sidebar
+        .get("used_by_count")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0);
+    let total = count.max(pages.len());
+    let shown: Vec<String> = pages.iter().take(5).map(cell).collect();
+    let used = if total == 0 {
+        String::new()
+    } else if shown.is_empty() {
+        format!("{total} page(s)")
+    } else {
+        let more = total.saturating_sub(shown.len());
+        let tail = if more > 0 {
+            format!(", +{more} more")
+        } else {
+            String::new()
+        };
+        format!("{total} page(s): {}{tail}", shown.join(", "))
+    };
     format!(
         "{} (id {}){}{}",
         cell(&sidebar["name"]),
@@ -685,6 +686,18 @@ mod tests {
                 "used_by_count": 4
             })),
             "CountOnly (id 3), used by: 4 page(s)"
+        );
+        // a stale count of 0 must not hide pages the list names
+        assert_eq!(
+            sidebar_heading(
+                &json!({"id": 4, "name": "Stale", "used_by": ["/a/"], "used_by_count": 0})
+            ),
+            "Stale (id 4), used by: 1 page(s): /a/"
+        );
+        // the count alone is enough when the list is missing
+        assert_eq!(
+            sidebar_heading(&json!({"id": 6, "name": "NoList", "used_by_count": 3})),
+            "NoList (id 6), used by: 3 page(s)"
         );
     }
 }
