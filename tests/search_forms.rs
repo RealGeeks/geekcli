@@ -245,3 +245,55 @@ fn reset_and_revisions() {
         .success();
     revert.assert();
 }
+
+#[test]
+fn search_forms_fields_filters_unicode_case_insensitively() {
+    let mut server = Server::new();
+    let dir = tempfile::tempdir().unwrap();
+    let forms = json!({
+        "source": "board",
+        "pages": [],
+        "home_page_forms": [],
+        "fields": [
+            {
+                "key": "san_jose_area",
+                "label": "San JOSÉ Area",
+                "group": "Ubicación",
+                "kind": "choice"
+            },
+            {
+                "key": "pool",
+                "label": "Pool",
+                "group": "Other",
+                "kind": "checkbox"
+            }
+        ]
+    });
+    server
+        .mock("GET", "/api/v3/search-forms/")
+        .with_body(forms.to_string())
+        .expect(2)
+        .create();
+
+    let out_search = cmd(&server, &dir)
+        .args(["search-forms", "fields", "-s", "josé"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rows_search = parse(&out_search)["results"].as_array().unwrap().clone();
+    assert_eq!(rows_search.len(), 1);
+    assert_eq!(rows_search[0]["key"], "san_jose_area");
+
+    let out_group = cmd(&server, &dir)
+        .args(["search-forms", "fields", "--group", "UBICACIÓN"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let rows_group = parse(&out_group)["results"].as_array().unwrap().clone();
+    assert_eq!(rows_group.len(), 1);
+    assert_eq!(rows_group[0]["key"], "san_jose_area");
+}

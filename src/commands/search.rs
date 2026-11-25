@@ -7,7 +7,7 @@
 //! commands make that visible: every criterion you pass is checked against
 //! what the site echoes back, and anything ignored is reported.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use clap::{Args, Subcommand};
 use serde_json::{json, Map, Value};
@@ -181,6 +181,11 @@ pub fn run(ctx: &Context, cmd: SearchCommand) -> Result<()> {
             all,
             fuzzy,
         } => {
+            if field == POLYGON {
+                return Err(Error::Usage(
+                    "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
+                ));
+            }
             if all {
                 all_choices(ctx, &field, search.as_deref(), fuzzy.as_deref())
             } else {
@@ -607,6 +612,14 @@ impl FieldRow {
 
 fn form_fields(ctx: &Context) -> Result<Vec<Value>> {
     let form = ctx.client.site_get(FORM_PATH, &Query::new())?.body;
+    let valid = form.is_object()
+        && (form.get("primary").is_some_and(Value::is_array)
+            || form.get("secondary").is_some_and(Value::is_array));
+    if !valid {
+        return Err(Error::Other(
+            "the advanced search form response did not contain primary or secondary fields".into(),
+        ));
+    }
     let mut rows = Vec::new();
     for section in ["primary", "secondary"] {
         let Some(items) = form.get(section).and_then(Value::as_array) else {
@@ -692,7 +705,7 @@ fn catalog_rows(body: &Value) -> Option<Vec<Value>> {
             .into_json(),
         );
     }
-    Some(rows)
+    (!rows.is_empty()).then_some(rows)
 }
 
 fn catalog_fields(ctx: &Context) -> Result<Vec<Value>> {
@@ -737,13 +750,17 @@ fn fields(ctx: &Context) -> Result<()> {
         let mut merged: Vec<Value> = Vec::new();
         for row in rows {
             let attr = row.get("attr").cloned().unwrap_or(Value::Null);
-            if let Some(existing) = merged.iter_mut().find(|m| {
-                m.get("attr") == Some(&attr) && m.get("value").is_some_and(|v| !v.is_null())
-            }) {
-                let values = format!("{}, {}", cell(&existing["value"]), cell(&row["value"]));
-                existing["value"] = Value::String(values);
-                existing["label"] = Value::String("Property type".into());
-                continue;
+            if !attr.is_null() && row.get("value").is_some_and(|v| !v.is_null()) {
+                if let Some(existing) = merged.iter_mut().find(|m| {
+                    m.get("attr") == Some(&attr) && m.get("value").is_some_and(|v| !v.is_null())
+                }) {
+                    let values = format!("{}, {}", cell(&existing["value"]), cell(&row["value"]));
+                    existing["value"] = Value::String(values);
+                    if attr.as_str() == Some("type") {
+                        existing["label"] = Value::String("Property type".into());
+                    }
+                    continue;
+                }
             }
             merged.push(row);
         }
@@ -792,11 +809,32 @@ fn choice_rows(rows: &[&Value]) -> Vec<Value> {
     out
 }
 
+/// Remove duplicate `{value, label}` choices while preserving order.
+fn dedup_choices(choices: Vec<Value>) -> Vec<Value> {
+    let mut seen: HashSet<(String, String)> = HashSet::with_capacity(choices.len());
+    let mut out = Vec::with_capacity(choices.len());
+    for choice in choices {
+        let key = (choice["value"].to_string(), choice["label"].to_string());
+        if seen.insert(key) {
+            out.push(choice);
+        }
+    }
+    out
+}
+
 /// The form's choices for a field, also looked up by the catalog row's
 /// params (the form lists `list_price_min`, the catalog `list_price`).
 fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Vec<Value>> {
     let form = form_fields(ctx).ok()?;
-    let mut names: Vec<String> = vec![field.to_string()];
+    let exact: Vec<&Value> = form
+        .iter()
+        .filter(|r| r.get("attr").and_then(Value::as_str) == Some(field))
+        .collect();
+    let exact_out = dedup_choices(choice_rows(&exact));
+    if !exact_out.is_empty() {
+        return Some(exact_out);
+    }
+    let mut names: Vec<String> = Vec::new();
     for row in catalog {
         for key in ["attr", "params"] {
             match row.get(key) {
@@ -818,7 +856,7 @@ fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Ve
                 .is_some_and(|a| names.iter().any(|n| n == a))
         })
         .collect();
-    let out = choice_rows(&rows);
+    let out = dedup_choices(choice_rows(&rows));
     (!out.is_empty()).then_some(out)
 }
 
@@ -827,11 +865,6 @@ fn form_choices_for(ctx: &Context, field: &str, catalog: &[&Value]) -> Option<Ve
 /// catalog) the advanced form's default-county list; `--all` reads the
 /// autocomplete index instead.
 fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>) -> Result<()> {
-    if field == POLYGON {
-        return Err(Error::Usage(
-            "polygon has no list of values: it takes lat,lng;lat,lng;… points (see `geekcli guide polygon`)".into(),
-        ));
-    }
     let fields = load_fields(ctx, true)?;
     let matching = field_rows(&fields.rows, field);
     if matching.is_empty() {
@@ -858,10 +891,10 @@ fn choices(ctx: &Context, field: &str, needle: Option<&str>, fuzzy: Option<&str>
         ctx.printer.note(&format!("Values from {source}."));
     }
     if let Some(needle) = needle {
-        let needle = needle.to_ascii_lowercase();
+        let needle = needle.to_lowercase();
         out.retain(|c| {
-            cell(&c["value"]).to_ascii_lowercase().contains(&needle)
-                || cell(&c["label"]).to_ascii_lowercase().contains(&needle)
+            cell(&c["value"]).to_lowercase().contains(&needle)
+                || cell(&c["label"]).to_lowercase().contains(&needle)
         });
     }
     print_choices(ctx, out, fuzzy)
@@ -937,10 +970,10 @@ fn all_choices(
     fuzzy: Option<&str>,
 ) -> Result<()> {
     let index = autocomplete_index(ctx)?;
-    let needle = needle.map(str::to_ascii_lowercase);
+    let needle = needle.map(str::to_lowercase);
     let mut values = autocomplete_values(&index, field);
     if let Some(n) = &needle {
-        values.retain(|v| v.to_ascii_lowercase().contains(n));
+        values.retain(|v| v.to_lowercase().contains(n));
     }
     if values.is_empty() {
         return Err(not_found(format!(
@@ -1413,10 +1446,18 @@ fn run_search(ctx: &Context, args: &RunArgs) -> Result<()> {
                 .as_ref()
                 .map(|r| format!(" (count limited by {r})"))
                 .unwrap_or_default();
-            ctx.printer.note(&format!(
-                "{count} matching {noun}{limit}, page {} of {} shown",
-                args.page, args.per_page
-            ));
+            let pages = total
+                .filter(|_| args.per_page > 0)
+                .map(|t| t.div_ceil(u64::from(args.per_page)).max(1));
+            let paging = match pages {
+                Some(total_pages) if limited.is_some() => {
+                    format!("page {} of {total_pages}+ shown", args.page)
+                }
+                Some(total_pages) => format!("page {} of {total_pages} shown", args.page),
+                None => format!("page {} ({} per page)", args.page, args.per_page),
+            };
+            ctx.printer
+                .note(&format!("{count} matching {noun}{limit}, {paging}"));
             Ok(())
         }
         Format::Json | Format::Jsonl => ctx.printer.raw(&json!({
@@ -1447,23 +1488,28 @@ fn url(ctx: &Context, args: &UrlArgs) -> Result<()> {
         "results_path": format!("/search/results/?{qs}"),
         "map_path": format!("/map_search/results/?{qs}"),
     });
+    if !understood.ignored.is_empty() {
+        ctx.printer.raw(&doc)?;
+        return Err(ignored_error(&understood.ignored));
+    }
     if args.save {
         let saved = ctx.client.site_post(SEARCH_PATH, &canonical)?.body;
-        if let Some(id) = saved.get("search_id").and_then(Value::as_str) {
-            doc["search_id"] = Value::String(id.to_string());
-            doc["search_id_int"] = saved.get("search_id_int").cloned().unwrap_or(Value::Null);
-            doc["results_path"] = Value::String(format!("/search/results/{id}/"));
-            doc["map_path"] = Value::String(format!("/map_search/results/{id}/1/"));
-            doc["results_url"] =
-                Value::String(ctx.client.site_url(&format!("search/results/{id}/")));
-        }
+        let Some(id) = saved
+            .get("search_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        else {
+            return Err(Error::Other(
+                "the site did not return a search_id when saving the search".into(),
+            ));
+        };
+        doc["search_id"] = Value::String(id.to_string());
+        doc["search_id_int"] = saved.get("search_id_int").cloned().unwrap_or(Value::Null);
+        doc["results_path"] = Value::String(format!("/search/results/{id}/"));
+        doc["map_path"] = Value::String(format!("/map_search/results/{id}/1/"));
+        doc["results_url"] = Value::String(ctx.client.site_url(&format!("search/results/{id}/")));
     }
-    ctx.printer.raw(&doc)?;
-    if understood.ignored.is_empty() {
-        Ok(())
-    } else {
-        Err(ignored_error(&understood.ignored))
-    }
+    ctx.printer.raw(&doc)
 }
 
 // ------------------------------------------------------- saved searches
@@ -1624,6 +1670,14 @@ mod tests {
         assert!(!is_numeric_list(&list(&["inf"])));
         assert!(!is_numeric_list(&list(&["-infinity"])));
         assert!(!is_numeric_list(&list(&["100", "NaN"])));
+    }
+
+    #[test]
+    fn catalog_rows_returns_none_for_empty_or_malformed_arrays() {
+        assert!(catalog_rows(&json!([])).is_none());
+        assert!(catalog_rows(&json!({"fields": []})).is_none());
+        assert!(catalog_rows(&json!([{"label": "no id"}])).is_none());
+        assert!(catalog_rows(&json!({"raw": "<html>oops</html>"})).is_none());
     }
 
     #[test]

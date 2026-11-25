@@ -599,9 +599,15 @@ not show) prints nothing and a note on stderr pointing at `--all`.
 
 Criteria are `key=value` items; repeat a key for several values
 (`type=res type=con`). A whole query string or URL copied from the site is
-accepted as one item. `--save` stores the search on the site and returns
-its short id, which is what `/search/results/<id>/`, the map search and a
-page's `search_id` refer to.
+accepted as one item, with or without `https://` (`www.example.com?city=Miami`
+works); a URL with no query string, or a criterion with an empty key
+(`=Miami`), is a usage error. A single `key=value` keeps `&` and `+` in its
+value as typed; only a stray `&` at either end is dropped. `--save` stores
+the search on the site and returns its short id, which is what
+`/search/results/<id>/`, the map search and a page's `search_id` refer to.
+It refuses to save (exit 5) when the site ignored a criterion, since the
+saved search would filter nothing for it, and fails if the site's answer
+has no `search_id`.
 
 `search check` also compares each value with the field's choices, for
 fields that have a choice list (city, county, subdivision, zip, type …;
@@ -609,7 +615,8 @@ price, beds and other numeric fields are skipped). Values are case
 sensitive on the site: `city=McLean` is understood but matches nothing when
 the site stores `Mclean`. The result carries:
 
-- `values_checked`: the fields whose values were compared.
+- `values_checked`: the fields whose values were compared (a field given
+  only `all`, "no preference", is not listed).
 - `value_warnings`: one entry per bad value, `{field, value, kind,
   suggestions, message}`. `kind` is `case_mismatch` (the suggestion is the
   site's spelling) or `unknown_value` (up to 3 closest values by edit
@@ -624,9 +631,13 @@ site's choice lists cannot be read, values go unchecked (reported in
 `value_check_error`); `--strict` then exits 1 (`value_check_unavailable`)
 rather than pass a check it could not make. The
 field's list in the catalog (the form's on sites without one; reported in
-`choices_source`) is tried first and the site's autocomplete index (every
-county) only when that does not settle it, so a value valid in another
-county is not flagged. Yes-no fields (`pool=true`, `1` or `yes`) are not
+`choices_source`) is tried first. A fixed catalog list (one not marked
+`dynamic`, such as `type`) is the whole answer. For other fields the
+site's autocomplete index (every county) is read when the list does not
+settle it, so a value valid in another county is not flagged. If that
+index cannot be read, the field is left unchecked, with no partial
+warnings, and lands in `value_check_error`. ZIP codes are checked like
+names; other numeric lists (prices, beds, presets) are not. Yes-no fields (`pool=true`, `1` or `yes`) are not
 value-checked. A clean check without `--count` still does not prove
 the page will show listings; use `--count` or `search run`.
 
