@@ -50,8 +50,8 @@ pub struct SnapshotArgs {
     /// Zero-based match to capture when --selector matches more than one element
     #[arg(long, default_value_t = 0, requires = "selector", value_name = "N")]
     pub nth: usize,
-    /// Phone emulation (390x844, touch, device scale 2)
-    #[arg(long, conflicts_with_all = ["width", "height"])]
+    /// Phone emulation (390x844, touch, device scale 2); not with --width/--height/--scale
+    #[arg(long, conflicts_with_all = ["width", "height", "scale"])]
     pub mobile: bool,
     /// Device scale factor; 2 doubles the pixel size for sharper text
     #[arg(long, default_value_t = 1, value_name = "N")]
@@ -71,10 +71,7 @@ pub fn run(ctx: &Context, args: &SnapshotArgs) -> Result<()> {
     } else {
         (args.width, args.height, args.scale.max(1))
     };
-    let out = args
-        .out
-        .clone()
-        .unwrap_or_else(|| default_out(&args.target));
+    let out = args.out.clone().unwrap_or_else(|| default_out(&url));
     let browser_path = find_browser(args.browser.as_deref())?;
 
     if ctx.printer.format == crate::output::Format::Table {
@@ -213,9 +210,13 @@ pub fn render(
 ) -> Result<Vec<u8>> {
     visit(browser_path, capture, |tab| {
         let clip = if let Some(selector) = selector {
-            let elements = tab
-                .find_elements(selector)
-                .map_err(|_| Error::Other(format!("no element matches selector `{selector}`")))?;
+            let elements = tab.find_elements(selector).map_err(|error| {
+                if is_no_element_found(&error) {
+                    Error::Other(format!("no element matches selector `{selector}`"))
+                } else {
+                    Error::Other(format!("browser query failed: {error}"))
+                }
+            })?;
             let Some(element) = elements.get(nth) else {
                 return Err(Error::Other(format!(
                     "selector `{selector}` matched {} element(s); --nth {nth} is out of range",
@@ -243,26 +244,31 @@ pub fn render(
     })
 }
 
-/// A site-relative path becomes an absolute URL on the current site.
+/// A site-relative path becomes an absolute URL on the current site. A full
+/// URL is accepted in any letter case and comes back normalized
+/// (`HTTPS://…` → `https://…`).
 pub fn resolve_url(client: &crate::client::Client, target: &str) -> String {
     let target = target.trim();
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return target.to_string();
+    let lower = target.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return url::Url::parse(target).map_or_else(|_| target.to_string(), String::from);
     }
     client.site_url(target)
 }
 
 /// `/blog/my-post/` → `snapshot-blog-my-post.png`; `/` → `snapshot-home.png`.
 pub fn default_out(target: &str) -> PathBuf {
-    let path = target
-        .trim()
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    let path = path.find('/').map_or("", |i| &path[i..]);
-    let slug: String = path
-        .split(['?', '#'])
-        .next()
-        .unwrap_or_default()
+    let trimmed = target.trim();
+    let parsed = url::Url::parse(trimmed)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"));
+    let raw_path = match &parsed {
+        Some(url) => url.path(),
+        None => trimmed.split(['?', '#']).next().unwrap_or_default(),
+    };
+    // `Url::path()` is percent-encoded; slug the characters it stands for.
+    let raw_path = percent_encoding::percent_decode_str(raw_path).decode_utf8_lossy();
+    let slug: String = raw_path
         .trim_matches('/')
         .chars()
         .map(|c| {
@@ -394,16 +400,72 @@ fn playwright_chromium(cache: &Path, suffix: &str) -> Vec<PathBuf> {
     builds.into_iter().map(|b| b.join(suffix)).collect()
 }
 
+pub(crate) fn is_no_element_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<headless_chrome::browser::tab::NoElementFound>()
+        .is_some()
+}
+
+fn parse_pathext(raw: Option<&str>) -> Vec<String> {
+    let exts: Vec<String> = raw
+        .unwrap_or_default()
+        .split(';')
+        .map(|ext| ext.trim().trim_start_matches('.'))
+        .filter(|ext| !ext.is_empty())
+        .map(str::to_string)
+        .collect();
+    if exts.is_empty() {
+        vec!["EXE".to_string()]
+    } else {
+        exts
+    }
+}
+
+fn path_candidates(dir: &Path, name: &str, pathext: Option<&str>) -> Vec<PathBuf> {
+    if Path::new(name).extension().is_none() {
+        if let Some(raw) = pathext {
+            return parse_pathext(Some(raw))
+                .into_iter()
+                .map(|ext| dir.join(format!("{name}.{ext}")))
+                .collect();
+        }
+    }
+    vec![dir.join(name)]
+}
+
+fn find_on_dirs(dirs: &[PathBuf], name: &str, pathext: Option<&str>) -> Option<PathBuf> {
+    if let Some(found) = dirs
+        .iter()
+        .flat_map(|dir| path_candidates(dir, name, pathext))
+        .find(|p| p.is_file())
+    {
+        return Some(found);
+    }
+    if pathext.is_some() && Path::new(name).extension().is_none() {
+        return dirs.iter().map(|dir| dir.join(name)).find(|p| p.is_file());
+    }
+    None
+}
+
 fn on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|p| p.is_file())
+    let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    let pathext = if cfg!(windows) {
+        Some(std::env::var("PATHEXT").unwrap_or_default())
+    } else {
+        None
+    };
+    find_on_dirs(&dirs, name, pathext.as_deref())
 }
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser as _;
+
     use super::*;
+    use crate::cli::Cli;
+    use crate::client::Client;
+    use crate::config::Target;
 
     #[test]
     fn default_output_names() {
@@ -416,6 +478,132 @@ mod tests {
             default_out("https://x.com/buying/?a=1"),
             PathBuf::from("snapshot-buying.png")
         );
+        assert_eq!(
+            default_out("HTTPS://x.com/buying/?a=1"),
+            PathBuf::from("snapshot-buying.png")
+        );
+        assert_eq!(
+            default_out("https://x.com?next=/buying"),
+            PathBuf::from("snapshot-home.png")
+        );
+        assert_eq!(default_out("buying"), PathBuf::from("snapshot-buying.png"));
+        // A resolved URL's path is percent-encoded; the slug must not show it.
+        assert_eq!(
+            default_out("https://x.com/search%20results/"),
+            PathBuf::from("snapshot-search-results.png")
+        );
+        assert_eq!(
+            default_out("https://x.com/blog/caf%C3%A9/"),
+            PathBuf::from("snapshot-blog-caf.png")
+        );
+        assert_eq!(
+            default_out("blog/my-post"),
+            PathBuf::from("snapshot-blog-my-post.png")
+        );
+        assert_eq!(
+            default_out("buying?a=1#frag"),
+            PathBuf::from("snapshot-buying.png")
+        );
+    }
+
+    #[test]
+    fn resolve_url_is_case_insensitive_for_http_schemes() -> Result<()> {
+        let client = Client::new(
+            &Target {
+                domain: "www.example.com".into(),
+                base_url: "https://www.example.com".into(),
+                api_key: None,
+            },
+            0,
+            false,
+        )?;
+        // Accepted in any case, printed and visited with the scheme lowercased.
+        assert_eq!(
+            resolve_url(&client, "HTTPS://example.com/a"),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            resolve_url(&client, "Http://example.com/a"),
+            "http://example.com/a"
+        );
+        assert_eq!(
+            resolve_url(&client, "/buying"),
+            "https://www.example.com/buying"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_candidates_handles_windows_pathext() {
+        let dir = Path::new("/bin");
+        assert_eq!(
+            path_candidates(dir, "chrome", None),
+            vec![PathBuf::from("/bin/chrome")]
+        );
+        assert_eq!(
+            path_candidates(dir, "chrome", Some(".EXE;; .CMD ;.BAT")),
+            vec![
+                PathBuf::from("/bin/chrome.EXE"),
+                PathBuf::from("/bin/chrome.CMD"),
+                PathBuf::from("/bin/chrome.BAT"),
+            ]
+        );
+        assert_eq!(
+            path_candidates(dir, "chrome", Some(";")),
+            vec![PathBuf::from("/bin/chrome.EXE")]
+        );
+        assert_eq!(
+            path_candidates(dir, "chrome", Some(" ; ; . ")),
+            vec![PathBuf::from("/bin/chrome.EXE")]
+        );
+        assert_eq!(
+            path_candidates(dir, "chrome.exe", Some(".EXE;.CMD")),
+            vec![PathBuf::from("/bin/chrome.exe")]
+        );
+    }
+
+    #[test]
+    fn find_on_dirs_prefers_pathext_across_path_over_earlier_extensionless_shim(
+    ) -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        let dir1 = root.path().join("dir1");
+        let dir2 = root.path().join("dir2");
+        std::fs::create_dir(&dir1)?;
+        std::fs::create_dir(&dir2)?;
+        std::fs::write(dir1.join("chrome"), b"")?;
+        std::fs::write(dir2.join("chrome.EXE"), b"")?;
+
+        let search_dirs = [dir1.clone(), dir2.clone()];
+        assert_eq!(
+            find_on_dirs(&search_dirs, "chrome", Some(".EXE;.CMD")),
+            Some(dir2.join("chrome.EXE"))
+        );
+        assert_eq!(
+            find_on_dirs(&search_dirs, "chrome", Some(";")),
+            Some(dir2.join("chrome.EXE"))
+        );
+        assert_eq!(
+            find_on_dirs(std::slice::from_ref(&dir1), "chrome", Some(".EXE")),
+            Some(dir1.join("chrome"))
+        );
+        assert_eq!(
+            find_on_dirs(&search_dirs, "chrome", None),
+            Some(dir1.join("chrome"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn is_no_element_found_distinguishes_missing_from_other_errors() {
+        let missing = anyhow::Error::new(headless_chrome::browser::tab::NoElementFound {});
+        let invalid = anyhow::anyhow!("DOM Error while querying");
+        assert!(is_no_element_found(&missing));
+        assert!(!is_no_element_found(&invalid));
+    }
+
+    #[test]
+    fn mobile_conflicts_with_scale() {
+        assert!(Cli::try_parse_from(["geekcli", "snapshot", "--mobile", "--scale", "1"]).is_err());
     }
 
     #[test]
