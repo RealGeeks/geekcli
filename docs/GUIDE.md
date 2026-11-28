@@ -1113,7 +1113,7 @@ geekcli snapshot / --selector ".card" --nth 2 --out third-card.png
 Output is `{"path", "url", "width", "height", "full", "bytes", "browser"}`;
 `-q` prints just the file path. `--mobile` fixes the viewport, so it
 cannot be combined with `--width`, `--height` or `--scale` (that is a usage
-error). Only public pages render: the browser
+error); the same holds for `inspect`. Only public pages render: the browser
 runs without a login, so a draft or scheduled post is a 404 (§5); snapshot
 it after publishing. After a content
 change, snapshot the page and look at it before moving on; unstyled
@@ -1143,7 +1143,10 @@ geekcli inspect / --mobile --assert "document.querySelector('.mobile-menu')?.che
 Every successful query prints JSON with the URL, viewport and value.
 `--assert` exits 1 if its expression is false, which makes it suitable for
 agent and CI checks. `--js` is a browser-side escape hatch; prefer selector
-queries and assertions when they express the check.
+queries and assertions when they express the check. Values JSON cannot hold
+(`NaN`, `Infinity`, `-0`, a BigInt) come back as strings such as `"NaN"`,
+and an invalid CSS selector fails with `browser query failed` whichever
+selector option you used.
 
 ## 21. Writing content that renders
 
