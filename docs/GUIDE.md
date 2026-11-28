@@ -1111,7 +1111,9 @@ geekcli snapshot / --selector ".card" --nth 2 --out third-card.png
 ```
 
 Output is `{"path", "url", "width", "height", "full", "bytes", "browser"}`;
-`-q` prints just the file path. Only public pages render: the browser
+`-q` prints just the file path. `--mobile` fixes the viewport, so it
+cannot be combined with `--width`, `--height` or `--scale` (that is a usage
+error). Only public pages render: the browser
 runs without a login, so a draft or scheduled post is a 404 (§5); snapshot
 it after publishing. After a content
 change, snapshot the page and look at it before moving on; unstyled

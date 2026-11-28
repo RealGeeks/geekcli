@@ -1002,6 +1002,7 @@ dependencies = [
  "jiff",
  "mockito",
  "open",
+ "percent-encoding",
  "predicates",
  "pulldown-cmark",
  "rand 0.10.3",

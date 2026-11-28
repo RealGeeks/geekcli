@@ -120,3 +120,79 @@ fn missing_browser_is_a_clear_error() {
         .code(3)
         .stderr(predicate::str::contains("browser not found"));
 }
+
+#[test]
+fn invalid_selector_reports_browser_error_instead_of_no_match() {
+    if find_browser(None).is_err() {
+        eprintln!("skipping: no Chrome installed");
+        return;
+    }
+    let mut server = Server::new();
+    server
+        .mock("GET", "/")
+        .with_header("content-type", "text/html")
+        .with_body(PAGE)
+        .expect_at_least(1)
+        .create();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("bad.png");
+    let mut cmd = Command::cargo_bin("geekcli").unwrap();
+    cmd.env_clear()
+        .env(
+            "SYSTEMROOT",
+            std::env::var("SYSTEMROOT").unwrap_or_default(),
+        )
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args([
+            "snapshot",
+            "/",
+            "--selector",
+            "div[",
+            "--wait",
+            "10",
+            "--out",
+        ])
+        .arg(&out)
+        .assert()
+        .code(1)
+        .stderr(
+            predicate::str::contains("browser query failed")
+                .and(predicate::str::contains("no element matches selector").not()),
+        );
+}
+
+#[test]
+fn bare_relative_target_writes_matching_default_output_file() {
+    if find_browser(None).is_err() {
+        eprintln!("skipping: no Chrome installed");
+        return;
+    }
+    let mut server = Server::new();
+    server
+        .mock("GET", "/buying")
+        .with_header("content-type", "text/html")
+        .with_body(PAGE)
+        .expect_at_least(1)
+        .create();
+    let dir = tempfile::tempdir().unwrap();
+    let mut cmd = Command::cargo_bin("geekcli").unwrap();
+    cmd.current_dir(dir.path())
+        .env_clear()
+        .env(
+            "SYSTEMROOT",
+            std::env::var("SYSTEMROOT").unwrap_or_default(),
+        )
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", std::env::var("HOME").unwrap_or_default())
+        .env("GEEKCLI_SITE", "www.test.local")
+        .env("GEEKCLI_BASE_URL", server.url())
+        .env("GEEKCLI_CONFIG_DIR", dir.path())
+        .args(["snapshot", "buying", "--wait", "10"])
+        .assert()
+        .success();
+    assert!(dir.path().join("snapshot-buying.png").is_file());
+}
